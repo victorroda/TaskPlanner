@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        GVA Agile Board → CSV + Gantt
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="styles.css"
+    >
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+
+    <!-- =========================================================
+         PANEL DE ENTRADA
+         ========================================================= -->
+
+    <section class="panel">
+
+        <h1>
+            GVA Agile Board → CSV + planificación
+        </h1>
+
+        <p>
+            Selecciona el HTML del Agile Board o introduce su URL.
+        </p>
+
+
+        <div class="input-section">
+
+            <label for="fileInput">
+                Seleccionar fichero HTML
+            </label>
+
+            <input
+                type="file"
+                id="fileInput"
+                accept=".html,.htm"
+            >
+
+            <button id="processFileButton">
+                Procesar fichero
+            </button>
+
+        </div>
+
+
+        <div class="input-section">
+
+            <label for="urlInput">
+                URL del Agile Board
+            </label>
+
+            <input
+                type="url"
+                id="urlInput"
+                value="https://gva.i-mes.net/projects/gva/agile/board?query_id=29"
+            >
+
+            <button id="processUrlButton">
+                Leer URL
+            </button>
+
+        </div>
+
+
+        <div id="status">
+            Esperando un fichero o una URL...
+        </div>
+
+    </section>
+
+
+
+    <!-- =========================================================
+         GANTT
+         ========================================================= -->
+
+    <section
+        id="ganttContainer"
+        class="panel"
+        style="display:none;"
+    >
+
+        <h2>
+            Planificación
+        </h2>
+
+
+        <div
+            id="summary"
+            class="summary"
+        ></div>
+
+
+        <div class="gantt-scroll">
+
+            <div
+                id="gantt"
+                class="gantt"
+            ></div>
+
+        </div>
+
+
+        <div class="legend">
+
+            <strong>
+                Cálculo de duración
+            </strong>
+
+            <p>
+                Duración =
+                <strong>
+                    número de palabras / 8.000 palabras/día
+                </strong>
+            </p>
+
+            <p>
+                Los sábados y domingos aparecen en gris,
+                pero <strong>no consumen días laborables</strong>.
+            </p>
+
+            <p>
+                Si una tarea vence el día 12,
+                su barra termina exactamente
+                <strong>entre el día 12 y el día 13</strong>.
+            </p>
+
+            <p>
+                La tarea se calcula hacia atrás desde
+                ese punto utilizando únicamente días laborables.
+            </p>
+
+            <p>
+                <strong>Doble clic</strong> sobre una tarea
+                para abrirla en Redmine.
+            </p>
+
+        </div>
+
+    </section>
+
+</div>
+
+
+<div
+    id="tooltip"
+    class="task-tooltip"
+></div>
+
+
+<script src="app.js"></script>
+
+</body>
+
+</html>

@@ -1,0 +1,668 @@
+/* ================================================================
+   GENERAL
+   ================================================================ */
+
+* {
+    box-sizing: border-box;
+}
+
+
+body {
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    margin: 0;
+
+    padding: 30px;
+
+    background: #f5f5f5;
+
+    color: #333;
+}
+
+
+.container {
+
+    max-width: 1400px;
+
+    margin: 0 auto;
+}
+
+
+.panel {
+
+    background: white;
+
+    padding: 25px;
+
+    border-radius: 10px;
+
+    box-shadow:
+        0 2px 10px rgba(0,0,0,0.10);
+
+    margin-bottom: 20px;
+}
+
+
+h1 {
+
+    margin-top: 0;
+
+    margin-bottom: 10px;
+}
+
+
+h2 {
+
+    margin-top: 30px;
+
+    margin-bottom: 20px;
+}
+
+
+/* ================================================================
+   INPUTS
+   ================================================================ */
+
+.input-section {
+
+    margin-top: 20px;
+}
+
+
+label {
+
+    display: block;
+
+    font-weight: bold;
+
+    margin-bottom: 8px;
+}
+
+
+input[type="file"],
+input[type="url"] {
+
+    width: 100%;
+
+    padding: 10px;
+
+    margin-bottom: 10px;
+
+    border:
+        1px solid #ccc;
+
+    border-radius: 5px;
+
+    background: white;
+}
+
+
+button {
+
+    padding:
+        10px 18px;
+
+    border: none;
+
+    border-radius: 6px;
+
+    background: #1976d2;
+
+    color: white;
+
+    cursor: pointer;
+
+    font-size: 15px;
+}
+
+
+button:hover {
+
+    background: #125aa0;
+}
+
+
+/* ================================================================
+   STATUS
+   ================================================================ */
+
+#status {
+
+    margin-top: 20px;
+
+    padding: 15px;
+
+    border-radius: 6px;
+
+    background: #eee;
+
+    white-space: pre-wrap;
+}
+
+
+#status.success {
+
+    background: #e8f5e9;
+
+    color: #1b5e20;
+}
+
+
+#status.error {
+
+    background: #ffebee;
+
+    color: #b71c1c;
+}
+
+
+/* ================================================================
+   GANTT
+   ================================================================ */
+
+#ganttContainer {
+
+    margin-top: 30px;
+}
+
+
+/*
+ * El propio Gantt tiene el scroll.
+ *
+ * Esto es importante:
+ *
+ * - scroll vertical → la cabecera permanece visible
+ * - scroll horizontal → podemos desplazarnos por las fechas
+ */
+
+.gantt-scroll {
+
+    max-height: 75vh;
+
+    overflow: auto;
+
+    border:
+        1px solid #ccc;
+
+    background: white;
+
+    position: relative;
+}
+
+
+.gantt {
+
+    position: relative;
+
+    min-width: max-content;
+}
+
+
+/* ================================================================
+   CABECERA
+   ================================================================ */
+
+
+/*
+ * CABECERA DE DÍAS
+ *
+ * Sticky respecto a .gantt-scroll.
+ */
+
+.gantt-header {
+
+    display: flex;
+
+    position: sticky;
+
+    top: 0;
+
+    z-index: 100;
+
+    background: white;
+
+    border-bottom:
+        2px solid #aaa;
+}
+
+
+/*
+ * La cabecera de persona también queda fija
+ * horizontalmente.
+ */
+
+.person-header {
+
+    width: 170px;
+
+    min-width: 170px;
+
+    height: 58px;
+
+    padding: 12px;
+
+    font-weight: bold;
+
+    background: #eee;
+
+    border-right:
+        2px solid #aaa;
+
+    position: sticky;
+
+    left: 0;
+
+    z-index: 120;
+}
+
+
+.days-header {
+
+    display: flex;
+}
+
+
+/* ================================================================
+   CABECERA DE DÍAS
+   ================================================================ */
+
+.day-header {
+
+    width: 32px;
+
+    min-width: 32px;
+
+    height: 58px;
+
+    position: relative;
+
+    background: white;
+
+    border-right:
+        1px solid #ddd;
+}
+
+
+.day-header.today {
+
+    background: #fff3cd;
+}
+
+
+.day-header.weekend {
+
+    background: #dcdcdc;
+
+    color: #888;
+}
+
+
+.day-number {
+
+    font-size: 10px;
+
+    text-align: center;
+
+    margin-top: 7px;
+}
+
+
+.weekday {
+
+    font-size: 9px;
+
+    text-align: center;
+
+    color: #777;
+
+    margin-top: 3px;
+}
+
+
+/* ================================================================
+   MESES
+   ================================================================ */
+
+.month-row {
+
+    display: flex;
+
+    height: 28px;
+
+    position: sticky;
+
+    top: 58px;
+
+    z-index: 90;
+
+    background: white;
+
+    border-bottom:
+        1px solid #ccc;
+}
+
+
+.month-spacer {
+
+    width: 170px;
+
+    min-width: 170px;
+
+    height: 28px;
+
+    background: #eee;
+
+    border-right:
+        2px solid #aaa;
+
+    position: sticky;
+
+    left: 0;
+
+    z-index: 110;
+}
+
+
+.month-label {
+
+    height: 28px;
+
+    padding:
+        5px 8px;
+
+    font-weight: bold;
+
+    font-size: 12px;
+
+    background: #f5f5f5;
+
+    border-right:
+        1px solid #aaa;
+
+    white-space: nowrap;
+}
+
+
+/* ================================================================
+   FILAS
+   ================================================================ */
+
+.person-row {
+
+    display: flex;
+
+    border-bottom:
+        1px solid #ccc;
+
+    min-height: 80px;
+}
+
+
+.person-name {
+
+    width: 170px;
+
+    min-width: 170px;
+
+    padding: 12px;
+
+    font-weight: bold;
+
+    background: #f7f7f7;
+
+    border-right:
+        2px solid #aaa;
+
+    position: sticky;
+
+    left: 0;
+
+    z-index: 10;
+}
+
+
+/* ================================================================
+   TIMELINE
+   ================================================================ */
+
+.timeline {
+
+    position: relative;
+
+    min-height: 80px;
+
+    background-image:
+        repeating-linear-gradient(
+            to right,
+            transparent 0px,
+            transparent 31px,
+            #e5e5e5 31px,
+            #e5e5e5 32px
+        );
+}
+
+
+/* ================================================================
+   FINES DE SEMANA
+   ================================================================ */
+
+.weekend-column {
+
+    position: absolute;
+
+    top: 0;
+
+    bottom: 0;
+
+    background:
+        rgba(0,0,0,0.07);
+
+    pointer-events: none;
+
+    z-index: 1;
+}
+
+
+.monday-line {
+
+    position: absolute;
+
+    top: 0;
+
+    bottom: 0;
+
+    width: 2px;
+
+    background:
+        rgba(0,0,0,0.16);
+
+    pointer-events: none;
+
+    z-index: 1;
+}
+
+
+/* ================================================================
+   BARRAS
+   ================================================================ */
+
+.task-bar {
+
+    position: absolute;
+
+    height: 32px;
+
+    padding:
+        3px 7px;
+
+    border:
+        1px solid rgba(0,0,0,0.25);
+
+    border-radius: 5px;
+
+    overflow: hidden;
+
+    white-space: nowrap;
+
+    cursor: pointer;
+
+    font-size: 12px;
+
+    font-weight: bold;
+
+    color: #222;
+
+    z-index: 2;
+
+    transition:
+        transform 0.1s,
+        box-shadow 0.1s;
+}
+
+
+.task-bar:hover {
+
+    transform:
+        translateY(-2px);
+
+    box-shadow:
+        0 3px 8px rgba(0,0,0,0.25);
+
+    z-index: 100;
+}
+
+
+/* ================================================================
+   COLORES
+   ================================================================ */
+
+.person-color-0 {
+    background: #b7d7ff;
+}
+
+.person-color-1 {
+    background: #bdecc0;
+}
+
+.person-color-2 {
+    background: #ffd39b;
+}
+
+.person-color-3 {
+    background: #d8b8f5;
+}
+
+.person-color-4 {
+    background: #f5b6d2;
+}
+
+.person-color-5 {
+    background: #b8e0df;
+}
+
+.person-color-6 {
+    background: #e5d29b;
+}
+
+.person-color-7 {
+    background: #c7c7f5;
+}
+
+
+/* ================================================================
+   TEXTO
+   ================================================================ */
+
+.task-id {
+
+    font-weight: bold;
+}
+
+
+.task-duration {
+
+    font-size: 10px;
+
+    font-weight: normal;
+
+    margin-left: 5px;
+}
+
+
+/* ================================================================
+   TOOLTIP
+   ================================================================ */
+
+.task-tooltip {
+
+    position: fixed;
+
+    display: none;
+
+    background: #222;
+
+    color: white;
+
+    padding: 10px;
+
+    border-radius: 5px;
+
+    font-size: 12px;
+
+    line-height: 1.5;
+
+    max-width: 350px;
+
+    z-index: 1000;
+
+    pointer-events: none;
+
+    box-shadow:
+        0 3px 10px rgba(0,0,0,0.3);
+}
+
+
+/* ================================================================
+   RESUMEN
+   ================================================================ */
+
+.summary {
+
+    margin-bottom: 20px;
+
+    padding: 15px;
+
+    background: #f0f4f8;
+
+    border-radius: 6px;
+
+    line-height: 1.6;
+}
+
+
+/* ================================================================
+   LEYENDA
+   ================================================================ */
+
+.legend {
+
+    margin-top: 15px;
+
+    padding: 15px;
+
+    background: white;
+
+    border:
+        1px solid #ddd;
+
+    border-radius: 6px;
+
+    font-size: 13px;
+
+    line-height: 1.5;
+}
+
