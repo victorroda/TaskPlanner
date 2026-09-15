@@ -33,8 +33,6 @@ let globalStart = null;
 let globalEnd = null;
 
 const htmlFile = document.getElementById("htmlFile");
-const urlInput = document.getElementById("urlInput");
-const loadUrlBtn = document.getElementById("loadUrlBtn");
 const downloadCsvBtn = document.getElementById("downloadCsvBtn");
 const statusEl = document.getElementById("status");
 const ganttContainer = document.getElementById("ganttContainer");
@@ -261,28 +259,34 @@ function extractTasksFromDocument(doc) {
 
 async function getTasksFromExtension() {
   const hash = window.location.hash || "";
+
   try {
     if (hash.startsWith("#data-gzip=")) {
       const encoded = decodeURIComponent(hash.slice("#data-gzip=".length));
       const binary = atob(encoded);
       const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+
       if (!("DecompressionStream" in window)) {
-        throw new Error("Este navegador no soporta la descompresión de datos.");
+        throw new Error("Este navegador no soporta descompresión gzip.");
       }
+
       const ds = new DecompressionStream("gzip");
       const writer = ds.writable.getWriter();
-      writer.write(bytes);
-      writer.close();
+      await writer.write(bytes);
+      await writer.close();
+
       const json = await new Response(ds.readable).text();
       const parsed = JSON.parse(json);
-      return Array.isArray(parsed) ? parsed : null;
+      return Array.isArray(parsed) && parsed.length ? parsed : null;
     }
+
     if (hash.startsWith("#data=")) {
       const encoded = decodeURIComponent(hash.slice("#data=".length));
       const json = decodeURIComponent(escape(atob(encoded)));
       const parsed = JSON.parse(json);
-      return Array.isArray(parsed) ? parsed : null;
+      return Array.isArray(parsed) && parsed.length ? parsed : null;
     }
+
     return null;
   } catch (error) {
     console.error("Error leyendo datos de la extensión:", error);
@@ -391,83 +395,197 @@ function prepareTasks(rawTasks) {
  * The due date itself is a full business day available to the task.
  * The visual right edge is always the beginning of the following day.
  */
-function isBusinessDay(date) {
-  const d = date.getDay();
-  return d !== 0 && d !== 6;
-}
+function calculateTaskStart(due, duration) {
+  const d = startOfDay(due);
+  const work = Math.max(0, Number(duration) || 0);
+  const DAY_MS = 86400000;
 
-function addDays(date, days) {
-  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  result.setDate(result.getDate() + days);
-  return result;
-}
+  if (work <= 0) return d;
 
-/*
- * Calculate the calendar start date for a task whose duration is measured
- * in working days and whose due date is the final day.
- *
- * Examples:
- *   1 working day, due Monday -> Monday
- *   2 working days, due Monday -> Friday
- *   3 working days, due Monday -> Thursday
- */
-function calculateTaskStart(dueDate, businessDays) {
-  const duration = Math.max(0, Number(businessDays) || 0);
-  if (duration === 0) return new Date(dueDate);
-
-  let remaining = duration;
-  let cursor = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-
-  while (remaining > 1e-10) {
-    if (isBusinessDay(cursor)) {
-      if (remaining <= 1) return new Date(cursor);
-      remaining -= 1;
-    }
-    cursor.setDate(cursor.getDate() - 1);
+  // A duration <= 1 working day occupies only that fraction of the
+  // due-date cell and ends at the boundary immediately after the due day.
+  if (work <= 1) {
+    return new Date(d.getTime() + (1 - work) * DAY_MS);
   }
 
-  return cursor;
+  // The due day contributes one complete working day. Then walk backwards
+  // over previous working days; weekends contribute zero working duration.
+  let remaining = work - 1;
+  let cursor = addDays(d, -1);
+
+  while (!isBusinessDay(cursor)) {
+    cursor = addDays(cursor, -1);
+  }
+
+  while (true) {
+    if (remaining <= 1) {
+      return new Date(cursor.getTime() + (1 - remaining) * DAY_MS);
+    }
+
+    remaining -= 1;
+    cursor = addDays(cursor, -1);
+    while (!isBusinessDay(cursor)) {
+      cursor = addDays(cursor, -1);
+    }
+  }
 }
 
 function assignTaskGeometry(task) {
-  const due = parseDate(task.dueDate);
-  if (!due) return null;
+  task.start = calculateTaskStart(task.due, task.duration);
 
-  const businessDays = Math.max(
-    0,
-    (Number(task.words) || 0) / CONFIG.WORDS_PER_DAY
-  );
-
-  task.start = calculateTaskStart(due, businessDays);
-
-  // Exact right boundary: immediately after the due date.
-  // Therefore a task due on Monday ends between Monday and Tuesday.
-  task.end = addDays(due, 1);
-  task.businessDays = businessDays;
-
-  return task;
+  // Critical semantic point:
+  // due date ends at the end of that calendar day.
+  // Therefore the bar's right boundary is the start of due+1.
+  task.end = addDays(task.due, 1);
 }
 
-function createTaskBar(task, timelineStart, timelineDays) {
+/* ---------- Gantt rendering ---------- */
+
+function buildDateArray(start, end) {
+  const dates = [];
+  let d = startOfDay(start);
+
+  while (d <= end) {
+    dates.push(new Date(d));
+    d = addDays(d, 1);
+  }
+
+  return dates;
+}
+
+function createDayHeader(date) {
+  const el = document.createElement("div");
+  el.className = "day-header";
+
+  if (!isBusinessDay(date)) el.classList.add("weekend");
+  if (date.getDay() === 1) el.classList.add("monday");
+
+  el.textContent = date.getDate();
+  el.title = formatDate(date);
+
+  return el;
+}
+
+function createMonthCells(dates) {
+  const cells = [];
+  let currentMonth = null;
+  let currentCount = 0;
+
+  function flush() {
+    if (!currentMonth) return;
+    const cell = document.createElement("div");
+    cell.className = "month-cell";
+    cell.style.flexBasis = `${currentCount * CONFIG.DAY_WIDTH}px`;
+    cell.style.width = `${currentCount * CONFIG.DAY_WIDTH}px`;
+    cell.textContent = `${MONTH_NAMES[currentMonth.month]} ${currentMonth.year}`;
+    cells.push(cell);
+  }
+
+  for (const date of dates) {
+    const key = `${date.getFullYear()}-${date.getMonth()}`;
+
+    if (!currentMonth || currentMonth.key !== key) {
+      flush();
+      currentMonth = {
+        key,
+        month: date.getMonth(),
+        year: date.getFullYear()
+      };
+      currentCount = 1;
+    } else {
+      currentCount++;
+    }
+  }
+
+  flush();
+  return cells;
+}
+
+function createTimelineGrid(dates, height) {
+  const grid = document.createElement("div");
+  grid.className = "timeline-grid";
+  grid.style.height = `${height}px`;
+
+  dates.forEach(date => {
+    const col = document.createElement("div");
+    col.className = "day-column";
+    grid.appendChild(col);
+  });
+
+  dates.forEach((date, index) => {
+    if (!isBusinessDay(date)) {
+      const weekend = document.createElement("div");
+      weekend.className = "weekend-column";
+      weekend.style.left = `${index * CONFIG.DAY_WIDTH}px`;
+      weekend.style.width = `${CONFIG.DAY_WIDTH}px`;
+      grid.appendChild(weekend);
+    }
+
+    if (date.getDay() === 1) {
+      const line = document.createElement("div");
+      line.className = "monday-line";
+      line.style.left = `${index * CONFIG.DAY_WIDTH}px`;
+      grid.appendChild(line);
+    }
+  });
+
+  return grid;
+}
+
+const PERSON_COLORS = [
+  "#4f46e5", "#0891b2", "#059669", "#d97706",
+  "#dc2626", "#9333ea", "#db2777", "#2563eb",
+  "#65a30d", "#ea580c", "#0f766e", "#7c3aed",
+  "#be123c", "#0369a1", "#15803d", "#b45309"
+];
+
+function colorForPerson(person) {
+  const value = normaliseAssignee(person);
+  if (value === "Sin asignar") return "#7c8796";
+
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return PERSON_COLORS[Math.abs(hash) % PERSON_COLORS.length];
+}
+
+function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
+  bar.style.backgroundColor = colorForPerson(normaliseAssignee(task.assigned || task.person || ""));
 
-  const leftDays = (task.start - timelineStart) / 86400000;
-  const rightDays = (task.end - timelineStart) / 86400000;
-  const timelineWidth = timelineDays * CONFIG.DAY_WIDTH;
+  const startOffset = daysBetween(globalStart, task.start);
+  const endOffset = daysBetween(globalStart, task.end);
 
-  // Anchor both edges to absolute timeline coordinates. This avoids
-  // cumulative rounding/drift, especially for short tasks.
-  bar.style.left = `${leftDays * CONFIG.DAY_WIDTH}px`;
-  bar.style.right = `${Math.max(0, timelineWidth - rightDays * CONFIG.DAY_WIDTH)}px`;
-  bar.style.width = "auto";
+  const leftPosition = Math.round(startOffset * CONFIG.DAY_WIDTH);
 
-  bar.style.backgroundColor = colorForPerson(task.assigned);
-  bar.innerHTML = `<span>${escapeHtml(task.name)}</span>`;
+  /*
+   * Anchor the RIGHT edge directly.
+   *
+   * This avoids cumulative/fractional rounding drift when several short
+   * tasks end on the same date and are placed on different vertical lines.
+   */
+  const rightPosition = Math.round(endOffset * CONFIG.DAY_WIDTH);
 
-  bar.addEventListener("mouseenter", (event) => showTooltip(event, task));
-  bar.addEventListener("mousemove", moveTooltip);
-  bar.addEventListener("mouseleave", hideTooltip);
+  const width = Math.max(
+    4,
+    rightPosition - leftPosition
+  );
+
+  bar.style.left = `${leftPosition}px`;
+  bar.style.width = `${width}px`;
+
+  const idSpan = document.createElement("span");
+  idSpan.className = "task-id";
+  idSpan.textContent = `#${task.taskId}`;
+
+  const titleSpan = document.createElement("span");
+  titleSpan.textContent = task.name || task.title || "";
+
+  bar.appendChild(idSpan);
+  bar.appendChild(titleSpan);
 
   return bar;
 }
@@ -742,17 +860,21 @@ htmlFile.addEventListener("change", async event => {
   }
 });
 
+
 downloadCsvBtn.addEventListener("click", downloadCSV);
 
 /* ---------- Initialisation ---------- */
 
 // Priority 1: data passed by the extension.
+// The payload lives in the URL fragment and is never sent to the server.
 (async function initialise() {
   const extensionTasks = await getTasksFromExtension();
+
   if (extensionTasks && extensionTasks.__error) {
     setStatus(extensionTasks.__error, "error");
     return;
   }
+
   if (Array.isArray(extensionTasks)) {
     displayTasks(extensionTasks, "extension");
   } else {
