@@ -1,668 +1,434 @@
-/* ================================================================
-   GENERAL
-   ================================================================ */
-
 * {
-    box-sizing: border-box;
+  box-sizing: border-box;
 }
 
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #222;
+  background: #f5f6f8;
+}
 
 body {
-
-    font-family:
-        Arial,
-        Helvetica,
-        sans-serif;
-
-    margin: 0;
-
-    padding: 30px;
-
-    background: #f5f5f5;
-
-    color: #333;
+  min-width: 1050px;
 }
 
+.app-header {
+  background: #1f2937;
+  color: white;
+  padding: 18px 28px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 25px;
+}
+
+.app-header p {
+  margin: 5px 0 0;
+  opacity: .8;
+  font-size: 13px;
+}
 
 .container {
-
-    max-width: 1400px;
-
-    margin: 0 auto;
+  padding: 20px 24px 35px;
 }
 
-
-.panel {
-
-    background: white;
-
-    padding: 25px;
-
-    border-radius: 10px;
-
-    box-shadow:
-        0 2px 10px rgba(0,0,0,0.10);
-
-    margin-bottom: 20px;
+.input-panel {
+  display: grid;
+  grid-template-columns: minmax(500px, 1fr) 360px;
+  gap: 18px;
+  margin-bottom: 20px;
 }
 
-
-h1 {
-
-    margin-top: 0;
-
-    margin-bottom: 10px;
+.input-card,
+.summary-card,
+.gantt-section {
+  background: white;
+  border: 1px solid #d9dde3;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05);
 }
 
+.input-card,
+.summary-card {
+  padding: 18px;
+}
 
 h2 {
-
-    margin-top: 30px;
-
-    margin-bottom: 20px;
+  margin: 0 0 14px;
+  font-size: 17px;
 }
 
-
-/* ================================================================
-   INPUTS
-   ================================================================ */
-
-.input-section {
-
-    margin-top: 20px;
+.file-label,
+.input-card label:not(.file-label) {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 7px;
 }
 
-
-label {
-
-    display: block;
-
-    font-weight: bold;
-
-    margin-bottom: 8px;
+#htmlFile,
+#urlInput {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #c9ced6;
+  border-radius: 6px;
+  background: white;
 }
 
-
-input[type="file"],
-input[type="url"] {
-
-    width: 100%;
-
-    padding: 10px;
-
-    margin-bottom: 10px;
-
-    border:
-        1px solid #ccc;
-
-    border-radius: 5px;
-
-    background: white;
+#htmlFile {
+  padding: 7px;
 }
 
+.separator {
+  text-align: center;
+  color: #8a919c;
+  margin: 13px 0;
+  position: relative;
+}
+
+.separator::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid #e0e3e8;
+}
+
+.separator span {
+  position: relative;
+  background: white;
+  padding: 0 9px;
+}
+
+.url-row {
+  display: grid;
+  grid-template-columns: 1fr 110px;
+  gap: 8px;
+}
 
 button {
-
-    padding:
-        10px 18px;
-
-    border: none;
-
-    border-radius: 6px;
-
-    background: #1976d2;
-
-    color: white;
-
-    cursor: pointer;
-
-    font-size: 15px;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 13px;
+  cursor: pointer;
+  font-weight: 600;
+  background: #1f2937;
+  color: white;
 }
-
 
 button:hover {
-
-    background: #125aa0;
+  filter: brightness(1.08);
 }
 
-
-/* ================================================================
-   STATUS
-   ================================================================ */
-
-#status {
-
-    margin-top: 20px;
-
-    padding: 15px;
-
-    border-radius: 6px;
-
-    background: #eee;
-
-    white-space: pre-wrap;
+button:disabled {
+  opacity: .45;
+  cursor: default;
 }
 
-
-#status.success {
-
-    background: #e8f5e9;
-
-    color: #1b5e20;
+.secondary-btn {
+  margin-top: 15px;
+  background: #4b5563;
 }
 
-
-#status.error {
-
-    background: #ffebee;
-
-    color: #b71c1c;
+.status {
+  margin-top: 13px;
+  min-height: 22px;
+  font-size: 13px;
+  color: #626a75;
 }
 
-
-/* ================================================================
-   GANTT
-   ================================================================ */
-
-#ganttContainer {
-
-    margin-top: 30px;
+.status.success {
+  color: #187a32;
 }
 
+.status.error {
+  color: #a01818;
+}
 
-/*
- * El propio Gantt tiene el scroll.
- *
- * Esto es importante:
- *
- * - scroll vertical → la cabecera permanece visible
- * - scroll horizontal → podemos desplazarnos por las fechas
- */
+.extension-info {
+  margin-top: 13px;
+  padding: 10px 12px;
+  border: 1px solid #b8d8c0;
+  border-radius: 7px;
+  background: #f0faf2;
+  color: #245b30;
+  font-size: 12px;
+}
+
+.extension-info strong,
+.extension-info span {
+  display: block;
+}
+
+.extension-info span {
+  margin-top: 3px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+}
+
+.summary-grid div {
+  border-bottom: 1px solid #eceef1;
+  padding-bottom: 8px;
+}
+
+.summary-grid span {
+  display: block;
+  font-size: 11px;
+  color: #7a828d;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.summary-grid strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 17px;
+}
+
+.gantt-section {
+  padding: 0;
+  overflow: hidden;
+}
+
+.section-heading {
+  padding: 17px 18px 14px;
+  border-bottom: 1px solid #d9dde3;
+}
+
+.section-heading h2 {
+  margin-bottom: 4px;
+}
+
+.section-heading p {
+  margin: 0;
+  color: #737b86;
+  font-size: 12px;
+}
+
+.gantt-container {
+  overflow: hidden;
+}
+
+.empty-state {
+  padding: 50px 20px;
+  text-align: center;
+  color: #858c96;
+}
+
+/* Gantt */
 
 .gantt-scroll {
-
-    max-height: 75vh;
-
-    overflow: auto;
-
-    border:
-        1px solid #ccc;
-
-    background: white;
-
-    position: relative;
+  max-height: 75vh;
+  overflow: auto;
+  position: relative;
+  background: white;
 }
 
-
-.gantt {
-
-    position: relative;
-
-    min-width: max-content;
+.gantt-inner {
+  position: relative;
+  min-width: max-content;
 }
-
-
-/* ================================================================
-   CABECERA
-   ================================================================ */
-
-
-/*
- * CABECERA DE DÍAS
- *
- * Sticky respecto a .gantt-scroll.
- */
 
 .gantt-header {
-
-    display: flex;
-
-    position: sticky;
-
-    top: 0;
-
-    z-index: 100;
-
-    background: white;
-
-    border-bottom:
-        2px solid #aaa;
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: 34px;
+  background: #eef0f3;
+  border-bottom: 1px solid #cbd0d7;
 }
-
-
-/*
- * La cabecera de persona también queda fija
- * horizontalmente.
- */
-
-.person-header {
-
-    width: 170px;
-
-    min-width: 170px;
-
-    height: 58px;
-
-    padding: 12px;
-
-    font-weight: bold;
-
-    background: #eee;
-
-    border-right:
-        2px solid #aaa;
-
-    position: sticky;
-
-    left: 0;
-
-    z-index: 120;
-}
-
-
-.days-header {
-
-    display: flex;
-}
-
-
-/* ================================================================
-   CABECERA DE DÍAS
-   ================================================================ */
-
-.day-header {
-
-    width: 32px;
-
-    min-width: 32px;
-
-    height: 58px;
-
-    position: relative;
-
-    background: white;
-
-    border-right:
-        1px solid #ddd;
-}
-
-
-.day-header.today {
-
-    background: #fff3cd;
-}
-
-
-.day-header.weekend {
-
-    background: #dcdcdc;
-
-    color: #888;
-}
-
-
-.day-number {
-
-    font-size: 10px;
-
-    text-align: center;
-
-    margin-top: 7px;
-}
-
-
-.weekday {
-
-    font-size: 9px;
-
-    text-align: center;
-
-    color: #777;
-
-    margin-top: 3px;
-}
-
-
-/* ================================================================
-   MESES
-   ================================================================ */
 
 .month-row {
-
-    display: flex;
-
-    height: 28px;
-
-    position: sticky;
-
-    top: 58px;
-
-    z-index: 90;
-
-    background: white;
-
-    border-bottom:
-        1px solid #ccc;
+  display: flex;
+  position: sticky;
+  top: 34px;
+  z-index: 99;
+  height: 28px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #d7dbe1;
 }
 
+.person-header,
+.person-name,
+.month-spacer {
+  position: sticky;
+  left: 0;
+  width: 170px;
+  min-width: 170px;
+  max-width: 170px;
+  z-index: 120;
+  background: #f8f9fa;
+  border-right: 2px solid #c7ccd3;
+}
+
+.person-header {
+  height: 34px;
+  padding: 9px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #646c77;
+}
 
 .month-spacer {
-
-    width: 170px;
-
-    min-width: 170px;
-
-    height: 28px;
-
-    background: #eee;
-
-    border-right:
-        2px solid #aaa;
-
-    position: sticky;
-
-    left: 0;
-
-    z-index: 110;
+  height: 28px;
 }
 
-
-.month-label {
-
-    height: 28px;
-
-    padding:
-        5px 8px;
-
-    font-weight: bold;
-
-    font-size: 12px;
-
-    background: #f5f5f5;
-
-    border-right:
-        1px solid #aaa;
-
-    white-space: nowrap;
+.day-header,
+.month-cell {
+  flex: 0 0 32px;
+  width: 32px;
 }
 
+.day-header {
+  position: relative;
+  height: 34px;
+  border-right: 1px solid #e1e4e8;
+  text-align: center;
+  padding-top: 8px;
+  font-size: 10px;
+  color: #4c5560;
+}
 
-/* ================================================================
-   FILAS
-   ================================================================ */
+.day-header.weekend {
+  background: #dcdcdc;
+  color: #888;
+}
+
+.day-header.monday {
+  border-left: 2px solid #aeb4bc;
+}
+
+.month-cell {
+  overflow: hidden;
+  text-align: center;
+  border-right: 1px solid #d4d8de;
+  padding-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #4d5560;
+  white-space: nowrap;
+}
+
+.month-cell.weekend {
+  background: #eeeeee;
+}
+
+.gantt-body {
+  position: relative;
+}
 
 .person-row {
-
-    display: flex;
-
-    border-bottom:
-        1px solid #ccc;
-
-    min-height: 80px;
+  display: flex;
+  position: relative;
+  min-height: 80px;
+  border-bottom: 1px solid #dfe3e8;
 }
-
 
 .person-name {
-
-    width: 170px;
-
-    min-width: 170px;
-
-    padding: 12px;
-
-    font-weight: bold;
-
-    background: #f7f7f7;
-
-    border-right:
-        2px solid #aaa;
-
-    position: sticky;
-
-    left: 0;
-
-    z-index: 10;
+  align-self: stretch;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 20;
+  color: #374151;
 }
 
-
-/* ================================================================
-   TIMELINE
-   ================================================================ */
-
-.timeline {
-
-    position: relative;
-
-    min-height: 80px;
-
-    background-image:
-        repeating-linear-gradient(
-            to right,
-            transparent 0px,
-            transparent 31px,
-            #e5e5e5 31px,
-            #e5e5e5 32px
-        );
+.timeline-row {
+  position: relative;
+  min-height: 80px;
 }
 
+.timeline-grid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  z-index: 0;
+}
 
-/* ================================================================
-   FINES DE SEMANA
-   ================================================================ */
+.day-column {
+  flex: 0 0 32px;
+  width: 32px;
+  border-right: 1px solid #e7e9ec;
+  min-height: 100%;
+}
 
 .weekend-column {
-
-    position: absolute;
-
-    top: 0;
-
-    bottom: 0;
-
-    background:
-        rgba(0,0,0,0.07);
-
-    pointer-events: none;
-
-    z-index: 1;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(0,0,0,.07);
+  pointer-events: none;
+  z-index: 1;
 }
-
 
 .monday-line {
-
-    position: absolute;
-
-    top: 0;
-
-    bottom: 0;
-
-    width: 2px;
-
-    background:
-        rgba(0,0,0,0.16);
-
-    pointer-events: none;
-
-    z-index: 1;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(80,88,98,.35);
+  pointer-events: none;
+  z-index: 2;
 }
-
-
-/* ================================================================
-   BARRAS
-   ================================================================ */
 
 .task-bar {
-
-    position: absolute;
-
-    height: 32px;
-
-    padding:
-        3px 7px;
-
-    border:
-        1px solid rgba(0,0,0,0.25);
-
-    border-radius: 5px;
-
-    overflow: hidden;
-
-    white-space: nowrap;
-
-    cursor: pointer;
-
-    font-size: 12px;
-
-    font-weight: bold;
-
-    color: #222;
-
-    z-index: 2;
-
-    transition:
-        transform 0.1s,
-        box-shadow 0.1s;
+  position: absolute;
+  height: 32px;
+  border-radius: 5px;
+  background: #536dfe;
+  color: white;
+  padding: 0 7px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  line-height: 32px;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0,0,0,.22);
+  cursor: pointer;
 }
-
 
 .task-bar:hover {
-
-    transform:
-        translateY(-2px);
-
-    box-shadow:
-        0 3px 8px rgba(0,0,0,0.25);
-
-    z-index: 100;
+  filter: brightness(1.08);
+  z-index: 30;
 }
-
-
-/* ================================================================
-   COLORES
-   ================================================================ */
-
-.person-color-0 {
-    background: #b7d7ff;
-}
-
-.person-color-1 {
-    background: #bdecc0;
-}
-
-.person-color-2 {
-    background: #ffd39b;
-}
-
-.person-color-3 {
-    background: #d8b8f5;
-}
-
-.person-color-4 {
-    background: #f5b6d2;
-}
-
-.person-color-5 {
-    background: #b8e0df;
-}
-
-.person-color-6 {
-    background: #e5d29b;
-}
-
-.person-color-7 {
-    background: #c7c7f5;
-}
-
-
-/* ================================================================
-   TEXTO
-   ================================================================ */
 
 .task-id {
-
-    font-weight: bold;
+  font-weight: 700;
+  margin-right: 5px;
 }
 
-
-.task-duration {
-
-    font-size: 10px;
-
-    font-weight: normal;
-
-    margin-left: 5px;
+.tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: 380px;
+  padding: 11px 13px;
+  background: #222;
+  color: white;
+  border-radius: 7px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.28);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
 }
 
-
-/* ================================================================
-   TOOLTIP
-   ================================================================ */
-
-.task-tooltip {
-
-    position: fixed;
-
-    display: none;
-
-    background: #222;
-
-    color: white;
-
-    padding: 10px;
-
-    border-radius: 5px;
-
-    font-size: 12px;
-
-    line-height: 1.5;
-
-    max-width: 350px;
-
-    z-index: 1000;
-
-    pointer-events: none;
-
-    box-shadow:
-        0 3px 10px rgba(0,0,0,0.3);
+.tooltip strong {
+  display: inline-block;
+  margin-right: 4px;
 }
-
-
-/* ================================================================
-   RESUMEN
-   ================================================================ */
-
-.summary {
-
-    margin-bottom: 20px;
-
-    padding: 15px;
-
-    background: #f0f4f8;
-
-    border-radius: 6px;
-
-    line-height: 1.6;
-}
-
-
-/* ================================================================
-   LEYENDA
-   ================================================================ */
-
-.legend {
-
-    margin-top: 15px;
-
-    padding: 15px;
-
-    background: white;
-
-    border:
-        1px solid #ddd;
-
-    border-radius: 6px;
-
-    font-size: 13px;
-
-    line-height: 1.5;
-}
-

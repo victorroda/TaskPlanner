@@ -1,173 +1,80 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
-
-    <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>
-        GVA Agile Board → CSV + Gantt
-    </title>
-
-    <link
-        rel="stylesheet"
-        href="styles.css"
-    >
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GVA Planning</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
-
-
 <body>
+  <header class="app-header">
+    <div>
+      <h1>GVA Planning</h1>
+      <p>Planificación de tareas de traducción</p>
+    </div>
+  </header>
 
-<div class="container">
+  <main class="container">
+    <section class="input-panel">
+      <div class="input-card">
+        <h2>1. Cargar datos</h2>
 
+        <label class="file-label" for="htmlFile">Seleccionar archivo HTML</label>
+        <input type="file" id="htmlFile" accept=".html,.htm,text/html">
 
-    <!-- =========================================================
-         PANEL DE ENTRADA
-         ========================================================= -->
+        <div class="separator"><span>o</span></div>
 
-    <section class="panel">
-
-        <h1>
-            GVA Agile Board → CSV + planificación
-        </h1>
-
-        <p>
-            Selecciona el HTML del Agile Board o introduce su URL.
-        </p>
-
-
-        <div class="input-section">
-
-            <label for="fileInput">
-                Seleccionar fichero HTML
-            </label>
-
-            <input
-                type="file"
-                id="fileInput"
-                accept=".html,.htm"
-            >
-
-            <button id="processFileButton">
-                Procesar fichero
-            </button>
-
+        <label for="urlInput">URL del Agile Board</label>
+        <div class="url-row">
+          <input
+            type="url"
+            id="urlInput"
+            value="https://gva.i-mes.net/projects/gva/agile/board?query_id=29"
+            placeholder="https://gva.i-mes.net/projects/gva/agile/board?query_id=29"
+          >
+          <button id="loadUrlBtn" type="button">Cargar URL</button>
         </div>
 
-
-        <div class="input-section">
-
-            <label for="urlInput">
-                URL del Agile Board
-            </label>
-
-            <input
-                type="url"
-                id="urlInput"
-                value="https://gva.i-mes.net/projects/gva/agile/board?query_id=29"
-            >
-
-            <button id="processUrlButton">
-                Leer URL
-            </button>
-
+        <div id="extensionInfo" class="extension-info hidden">
+          <strong>Datos recibidos desde la extensión</strong>
+          <span>La información procede únicamente del DOM ya cargado en la pestaña de GVA.</span>
         </div>
 
+        <div id="status" class="status">Esperando datos…</div>
+      </div>
 
-        <div id="status">
-            Esperando un fichero o una URL...
+      <div class="summary-card">
+        <h2>Resumen</h2>
+        <div class="summary-grid">
+          <div><span>Tareas</span><strong id="taskCount">—</strong></div>
+          <div><span>Personas</span><strong id="personCount">—</strong></div>
+          <div><span>Palabras</span><strong id="wordCount">—</strong></div>
+          <div><span>Último vencimiento</span><strong id="lastDueDate">—</strong></div>
         </div>
-
+        <button id="downloadCsvBtn" class="secondary-btn" type="button" disabled>
+          Descargar CSV
+        </button>
+      </div>
     </section>
 
-
-
-    <!-- =========================================================
-         GANTT
-         ========================================================= -->
-
-    <section
-        id="ganttContainer"
-        class="panel"
-        style="display:none;"
-    >
-
-        <h2>
-            Planificación
-        </h2>
-
-
-        <div
-            id="summary"
-            class="summary"
-        ></div>
-
-
-        <div class="gantt-scroll">
-
-            <div
-                id="gantt"
-                class="gantt"
-            ></div>
-
+    <section class="gantt-section">
+      <div class="section-heading">
+        <div>
+          <h2>Planificación</h2>
+          <p>8.000 palabras = 1 día laborable · sábados y domingos no computan</p>
         </div>
+      </div>
 
-
-        <div class="legend">
-
-            <strong>
-                Cálculo de duración
-            </strong>
-
-            <p>
-                Duración =
-                <strong>
-                    número de palabras / 8.000 palabras/día
-                </strong>
-            </p>
-
-            <p>
-                Los sábados y domingos aparecen en gris,
-                pero <strong>no consumen días laborables</strong>.
-            </p>
-
-            <p>
-                Si una tarea vence el día 12,
-                su barra termina exactamente
-                <strong>entre el día 12 y el día 13</strong>.
-            </p>
-
-            <p>
-                La tarea se calcula hacia atrás desde
-                ese punto utilizando únicamente días laborables.
-            </p>
-
-            <p>
-                <strong>Doble clic</strong> sobre una tarea
-                para abrirla en Redmine.
-            </p>
-
+      <div id="ganttContainer" class="gantt-container">
+        <div class="empty-state">
+          Carga las tareas para mostrar la planificación.
         </div>
-
+      </div>
     </section>
+  </main>
 
-</div>
+  <div id="tooltip" class="tooltip hidden"></div>
 
-
-<div
-    id="tooltip"
-    class="task-tooltip"
-></div>
-
-
-<script src="app.js"></script>
-
+  <script src="app.js"></script>
 </body>
-
 </html>

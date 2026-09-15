@@ -1,3033 +1,851 @@
-"use strict";
-
-
-/******************************************************************
- * CONFIGURACIÓN
- ******************************************************************/
+/* ============================================================
+   GVA PLANNING
+   - Reads local HTML files
+   - Optionally tries the URL supplied by the user
+   - Accepts task data from the Chrome/Edge extension via #data=
+   - Gantt: 8000 words / business day
+   - Due date is the END of that day: right edge = next calendar day
+   ============================================================ */
 
 const CONFIG = {
-
-    CSV_FILENAME:
-        "tasques_GVA.csv",
-
-    WORDS_PER_DAY:
-        8000,
-
-    DAY_WIDTH:
-        32,
-
-    PERSON_WIDTH:
-        170,
-
-    ROW_BASE_HEIGHT:
-        80,
-
-    TASK_HEIGHT:
-        32,
-
-    TASK_VERTICAL_GAP:
-        8
-
+  CSV_FILENAME: "tasques_GVA.csv",
+  WORDS_PER_DAY: 8000,
+  DAY_WIDTH: 32,
+  PERSON_WIDTH: 170,
+  ROW_BASE_HEIGHT: 80,
+  TASK_HEIGHT: 32,
+  TASK_VERTICAL_GAP: 8
 };
 
+const MONTHS = {
+  gen: 0, feb: 1, mar: 2, abr: 3, mai: 4, jun: 5, jul: 6, ago: 7,
+  set: 8, oct: 9, nov: 10, des: 11,
+  ene: 0, dic: 11, jan: 0, apr: 3, may: 4, aug: 7, sep: 8, dec: 11
+};
 
-/******************************************************************
- * ELEMENTOS DOM
- ******************************************************************/
+const MONTH_NAMES = [
+  "ene", "feb", "mar", "abr", "may", "jun",
+  "jul", "ago", "set", "oct", "nov", "des"
+];
 
-const fileInput =
-    document.getElementById(
-        "fileInput"
-    );
+let tasks = [];
+let globalStart = null;
+let globalEnd = null;
 
+const htmlFile = document.getElementById("htmlFile");
+const urlInput = document.getElementById("urlInput");
+const loadUrlBtn = document.getElementById("loadUrlBtn");
+const downloadCsvBtn = document.getElementById("downloadCsvBtn");
+const statusEl = document.getElementById("status");
+const ganttContainer = document.getElementById("ganttContainer");
+const tooltip = document.getElementById("tooltip");
 
-const processFileButton =
-    document.getElementById(
-        "processFileButton"
-    );
-
-
-const processUrlButton =
-    document.getElementById(
-        "processUrlButton"
-    );
-
-
-const urlInput =
-    document.getElementById(
-        "urlInput"
-    );
-
-
-const statusBox =
-    document.getElementById(
-        "status"
-    );
-
-
-const ganttContainer =
-    document.getElementById(
-        "ganttContainer"
-    );
-
-
-const gantt =
-    document.getElementById(
-        "gantt"
-    );
-
-
-const summary =
-    document.getElementById(
-        "summary"
-    );
-
-
-const tooltip =
-    document.getElementById(
-        "tooltip"
-    );
-
-
-/******************************************************************
- * FECHAS
- ******************************************************************/
-
-function normalizeDate(date) {
-
-    return new Date(
-
-        date.getFullYear(),
-
-        date.getMonth(),
-
-        date.getDate()
-
-    );
-
+function setStatus(text, type = "") {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (type ? " " + type : "");
 }
 
-
-function today() {
-
-    return normalizeDate(
-        new Date()
-    );
-
+function cleanText(value) {
+  return (value || "").replace(/\s+/g, " ").trim();
 }
 
+function parseDate(value) {
+  if (!value) return null;
 
-function addDays(
-    date,
-    days
-) {
+  const text = cleanText(value)
+    .replace(/\./g, "")
+    .replace(/,/g, "");
 
-    const result =
-        new Date(date);
+  // dd/mm/yyyy
+  let m = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+    return isValidDate(d) ? startOfDay(d) : null;
+  }
 
-    result.setDate(
-        result.getDate() + days
-    );
+  // "16 Nov 2026"
+  m = text.match(/^(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\s+(\d{4})$/);
+  if (m) {
+    const month = MONTHS[m[2].slice(0, 3).toLowerCase()];
+    if (month !== undefined) {
+      const d = new Date(Number(m[3]), month, Number(m[1]));
+      return isValidDate(d) ? startOfDay(d) : null;
+    }
+  }
 
-    return result;
+  // "2026-11-16"
+  m = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return isValidDate(d) ? startOfDay(d) : null;
+  }
 
+  const d = new Date(text);
+  return isValidDate(d) ? startOfDay(d) : null;
 }
 
-
-function daysBetween(
-    start,
-    end
-) {
-
-    const MS_PER_DAY =
-        24 *
-        60 *
-        60 *
-        1000;
-
-
-    return (
-        end.getTime() -
-        start.getTime()
-    ) / MS_PER_DAY;
-
+function isValidDate(d) {
+  return d instanceof Date && !Number.isNaN(d.getTime());
 }
 
-
-function isBusinessDay(
-    date
-) {
-
-    const day =
-        date.getDay();
-
-
-    return (
-        day !== 0 &&
-        day !== 6
-    );
-
+function startOfDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return startOfDay(d);
+}
 
-/******************************************************************
- * PARSEAR FECHA
- ******************************************************************/
+function isBusinessDay(date) {
+  const day = date.getDay();
+  return day !== 0 && day !== 6;
+}
 
-function parseDate(
-    dateString
-) {
+function formatDate(date) {
+  if (!date) return "";
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
 
-    if (!dateString) {
+function formatMonth(date) {
+  return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+}
 
-        return null;
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+}
 
+function daysBetween(a, b) {
+  const ms = startOfDay(b) - startOfDay(a);
+  return Math.round(ms / 86400000);
+}
+
+function parseWords(value) {
+  let text = cleanText(value).replace(/\u00a0/g, " ");
+  if (!text) return 0;
+
+  text = text.replace(/[^\d.,-]/g, "");
+
+  if (text.includes(",") && text.includes(".")) {
+    text = text.replace(/\./g, "").replace(",", ".");
+  } else if (text.includes(",")) {
+    text = text.replace(/,/g, "");
+  } else if (text.includes(".") && /^\d+\.\d{3}$/.test(text)) {
+    text = text.replace(".", "");
+  }
+
+  const n = Number(text);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/* ---------- Extraction from an HTML document ---------- */
+
+function getAttributeValue(card, labels) {
+  const wanted = labels.map(x => x.toLowerCase());
+
+  for (const b of card.querySelectorAll("b, strong, label")) {
+    const label = cleanText(b.textContent).toLowerCase().replace(/:$/, "");
+    if (!wanted.includes(label)) continue;
+
+    let node = b.nextSibling;
+
+    while (node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const t = cleanText(node.textContent);
+        if (t) return t;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const t = cleanText(node.textContent);
+        if (t) return t;
+      }
+      node = node.nextSibling;
     }
 
-
-    const months = {
-
-        /*
-         * Catalán
-         */
-
-        gen: 0,
-        feb: 1,
-        mar: 2,
-        abr: 3,
-        mai: 4,
-        jun: 5,
-        jul: 6,
-        ago: 7,
-        set: 8,
-        oct: 9,
-        nov: 10,
-        des: 11,
-
-        /*
-         * Español
-         */
-
-        ene: 0,
-        dic: 11,
-
-        /*
-         * Inglés
-         */
-
-        jan: 0,
-        apr: 3,
-        may: 4,
-        aug: 7,
-        sep: 8,
-        dec: 11
-
-    };
-
-
-    const text =
-        dateString.trim();
-
-
-    /*
-     * Formato:
-     *
-     * 16 Nov 2026
-     */
-
-    const match =
-        text.match(
-            /^(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\.?\s+(\d{4})/
-        );
-
-
-    if (match) {
-
-        const day =
-            parseInt(
-                match[1],
-                10
-            );
-
-
-        const monthName =
-            match[2]
-                .toLowerCase()
-                .substring(
-                    0,
-                    3
-                );
-
-
-        const year =
-            parseInt(
-                match[3],
-                10
-            );
-
-
-        if (
-            months[monthName] !==
-            undefined
-        ) {
-
-            return new Date(
-                year,
-                months[monthName],
-                day
-            );
-
-        }
-
+    const parent = b.parentElement;
+    if (parent) {
+      const clone = parent.cloneNode(true);
+      clone.querySelectorAll("b, strong, label").forEach(x => x.remove());
+      const t = cleanText(clone.textContent);
+      if (t) return t;
     }
+  }
 
+  return "";
+}
 
-    /*
-     * Fallback
-     */
+function extractIssueId(card) {
+  const dataId = card.getAttribute("data-id") || "";
 
-    const fallback =
-        new Date(text);
+  const idEl = card.querySelector(".issue-id");
+  const idText = cleanText(idEl?.textContent);
+  const match = idText.match(/#(\d+)/);
+  if (match) return match[1];
 
+  const link = card.querySelector("a[href*='/issues/']");
+  const hrefMatch = (link?.getAttribute("href") || "").match(/\/issues\/(\d+)/);
+  if (hrefMatch) return hrefMatch[1];
 
-    if (
-        !isNaN(
-            fallback.getTime()
-        )
-    ) {
+  if (/^\d+$/.test(dataId)) return dataId;
 
-        return normalizeDate(
-            fallback
-        );
+  const cardMatch = cleanText(card.textContent).match(/#(\d+)/);
+  return cardMatch ? cardMatch[1] : "";
+}
 
-    }
+function extractTaskFromCard(card) {
+  const taskId = extractIssueId(card);
 
+  const name =
+    cleanText(card.querySelector("p.name a")?.textContent) ||
+    cleanText(card.querySelector("p.name")?.textContent);
 
+  const dueDate =
+    getAttributeValue(card, [
+      "Data real de venciment",
+      "Fecha real de vencimiento",
+      "Real due date",
+      "Due date"
+    ]);
+
+  const wordsText =
+    getAttributeValue(card, [
+      "Nombre de paraules Salt pro",
+      "Número de palabras Salt pro",
+      "Salt pro words",
+      "Words"
+    ]);
+
+  // The actual GVA HTML stores the assignee in:
+  // <p class="info assigned-user"><span class="user"><a>imes xx</a></span>
+  const assigned =
+    cleanText(card.querySelector(".assigned-user .user a")?.textContent) ||
+    getAttributeValue(card, [
+      "Persona assignada",
+      "Persona asignada",
+      "Assigned to",
+      "Assignee"
+    ]);
+
+  const issueLink =
+    card.querySelector("p.name a[href*='/issues/']")?.href ||
+    card.querySelector("a[href*='/issues/']")?.href ||
+    "";
+
+  return {
+    taskId,
+    title: name,
+    name,
+    dueDate,
+    words: parseWords(wordsText),
+    assigned,
+    url: issueLink
+  };
+}
+
+function extractTasksFromDocument(doc) {
+  const cards = Array.from(doc.querySelectorAll(".issue-card[data-id]"));
+  const seen = new Set();
+  const result = [];
+
+  for (const card of cards) {
+    const task = extractTaskFromCard(card);
+    if (!task.taskId || seen.has(task.taskId)) continue;
+
+    seen.add(task.taskId);
+    result.push(task);
+  }
+
+  return result;
+}
+
+/* ---------- Extension input ---------- */
+
+function getTasksFromExtension() {
+  const hash = window.location.hash || "";
+  if (!hash.startsWith("#data=")) return null;
+
+  try {
+    const encoded = decodeURIComponent(hash.slice(6));
+    const json = decodeURIComponent(escape(atob(encoded)));
+    const parsed = JSON.parse(json);
+
+    if (!Array.isArray(parsed) || !parsed.length) return null;
+
+    return parsed;
+  } catch (error) {
+    console.error("Error leyendo datos de la extensión:", error);
     return null;
-
+  }
 }
 
+/* ---------- Normalisation ---------- */
 
-/******************************************************************
- * FORMATO DE FECHA PARA MOSTRAR
- ******************************************************************/
+function normaliseTasks(rawTasks) {
+  const seen = new Set();
 
-function formatDate(
-    date
-) {
-
-    return date.toLocaleDateString(
-        "es-ES",
-        {
-            day:
-                "2-digit",
-
-            month:
-                "2-digit",
-
-            year:
-                "numeric"
-        }
-    );
-
+  return rawTasks
+    .map(t => ({
+      taskId: String(t.taskId || t.id || "").trim(),
+      title: cleanText(t.title || ""),
+      name: cleanText(t.name || t.title || ""),
+      dueDate: cleanText(t.dueDate || ""),
+      words: Number(t.words) || parseWords(t.words),
+      assigned: cleanText(t.assigned || t.person || ""),
+      url: t.url || ""
+    }))
+    .filter(t => {
+      if (!t.taskId || seen.has(t.taskId)) return false;
+      seen.add(t.taskId);
+      return true;
+    });
 }
 
-
-/******************************************************************
- * FORMATO DE FECHA PARA CSV
- *
- * SIEMPRE:
- *
- * dd/mm/aaaa
- *
- * Ejemplo:
- *
- * 16 Nov 2026
- *
- * →
- *
- * 16/11/2026
- ******************************************************************/
-
-function formatCSVDate(
-    dateString
-) {
-
-    const date =
-        parseDate(
-            dateString
-        );
-
-
-    if (!date) {
-
-        return dateString || "";
-
-    }
-
-
-    const day =
-        String(
-            date.getDate()
-        )
-        .padStart(
-            2,
-            "0"
-        );
-
-
-    const month =
-        String(
-            date.getMonth() + 1
-        )
-        .padStart(
-            2,
-            "0"
-        );
-
-
-    const year =
-        date.getFullYear();
-
-
-    return (
-        day +
-        "/" +
-        month +
-        "/" +
-        year
-    );
-
-}
-
-
-/******************************************************************
- * FORMATO DE MES
- ******************************************************************/
-
-function formatMonth(
-    date
-) {
-
-    return date.toLocaleDateString(
-        "es-ES",
-        {
-            month:
-                "short",
-
-            year:
-                "numeric"
-        }
-    );
-
-}
-
-
-/******************************************************************
- * PALABRAS
- ******************************************************************/
-
-function parseWords(
-    value
-) {
-
-    if (!value) {
-
-        return 0;
-
-    }
-
-
-    let text =
-        String(value)
-            .trim()
-            .replace(
-                /[^\d.,]/g,
-                ""
-            );
-
-
-    /*
-     * Formato europeo:
-     *
-     * 12.345,67
-     */
-
-    if (
-        text.includes(".") &&
-        text.includes(",")
-    ) {
-
-        text =
-            text
-                .replace(
-                    /\./g,
-                    ""
-                )
-                .replace(
-                    ",",
-                    "."
-                );
-
-    }
-
-    else if (
-        text.includes(".")
-    ) {
-
-        text =
-            text.replace(
-                /\./g,
-                ""
-            );
-
-    }
-
-
-    return (
-        parseFloat(text) ||
-        0
-    );
-
-}
-
-
-/******************************************************************
- * FORMATO NÚMERO
- ******************************************************************/
-
-function formatNumber(
-    value
-) {
-
-    return Number(
-        value
-    ).toLocaleString(
-        "es-ES"
-    );
-
-}
-
-
-/******************************************************************
- * ESCAPAR HTML
- ******************************************************************/
-
-function escapeHTML(
-    text
-) {
-
-    return String(
-        text || ""
-    )
-
-        .replace(
-            /&/g,
-            "&amp;"
-        )
-
-        .replace(
-            /</g,
-            "&lt;"
-        )
-
-        .replace(
-            />/g,
-            "&gt;"
-        )
-
-        .replace(
-            /"/g,
-            "&quot;"
-        )
-
-        .replace(
-            /'/g,
-            "&#039;"
-        );
-
-}
-
-
-/******************************************************************
- * ESTADO
- ******************************************************************/
-
-function setStatus(
-    message,
-    type = ""
-) {
-
-    statusBox.textContent =
-        message;
-
-
-    statusBox.className =
-        "";
-
-
-    if (type) {
-
-        statusBox.classList.add(
-            type
-        );
-
-    }
-
-}
-
-
-/******************************************************************
- * EXTRAER ATRIBUTO
- ******************************************************************/
-
-function getAttributeValue(
-    card,
-    label
-) {
-
-    const elements =
-        card.querySelectorAll(
-            "b"
-        );
-
-
-    for (
-        const element of elements
-    ) {
-
-        const text =
-            element.textContent
-                .replace(
-                    /\s+/g,
-                    " "
-                )
-                .trim();
-
-
-        if (
-            text
-                .toLowerCase()
-                .includes(
-                    label.toLowerCase()
-                )
-        ) {
-
-            let result =
-                "";
-
-
-            let node =
-                element.nextSibling;
-
-
-            while (node) {
-
-                if (
-                    node.nodeType ===
-                    Node.TEXT_NODE
-                ) {
-
-                    result +=
-                        node.textContent;
-
-                }
-
-                else if (
-                    node.nodeType ===
-                    Node.ELEMENT_NODE
-                ) {
-
-                    if (
-                        node.tagName ===
-                        "BR"
-                    ) {
-
-                        break;
-
-                    }
-
-
-                    result +=
-                        node.textContent;
-
-                }
-
-
-                node =
-                    node.nextSibling;
-
-            }
-
-
-            result =
-                result
-                    .replace(
-                        /^[:\s]+/,
-                        ""
-                    )
-                    .replace(
-                        /\s+/g,
-                        " "
-                    )
-                    .trim();
-
-
-            if (result) {
-
-                return result;
-
-            }
-
-        }
-
-    }
-
-
-    /*
-     * Fallback
-     */
-
-    const attributes =
-        card.querySelector(
-            ".attributes"
-        );
-
-
-    if (!attributes) {
-
-        return "";
-
-    }
-
-
-    const text =
-        attributes.innerText;
-
-
-    const regex =
-        new RegExp(
-
-            label.replace(
-                /[.*+?^${}()|[\]\\]/g,
-                "\\$&"
-            ) +
-
-            "\\s*:\\s*([^\\n]+)",
-
-            "i"
-
-        );
-
-
-    const match =
-        text.match(
-            regex
-        );
-
-
-    return match
-        ? match[1].trim()
-        : "";
-
-}
-
-
-/******************************************************************
- * EXTRAER TAREAS
- ******************************************************************/
-
-function extractTasks(
-    html
-) {
-
-    const parser =
-        new DOMParser();
-
-
-    const doc =
-        parser.parseFromString(
-            html,
-            "text/html"
-        );
-
-
-    const cards =
-        doc.querySelectorAll(
-            ".issue-card[data-id]"
-        );
-
-
-    const tasks =
-        new Map();
-
-
-    cards.forEach(
-        card => {
-
-            const dataId =
-                card.getAttribute(
-                    "data-id"
-                );
-
-
-            if (!dataId) {
-
-                return;
-
-            }
-
-
-            /*
-             * ID
-             */
-
-            let taskId =
-                "";
-
-
-            const issueId =
-                card.querySelector(
-                    ".issue-id"
-                );
-
-
-            if (issueId) {
-
-                const match =
-                    issueId.textContent
-                        .match(
-                            /#(\d+)/
-                        );
-
-
-                if (match) {
-
-                    taskId =
-                        match[1];
-
-                }
-
-            }
-
-
-            /*
-             * NOMBRE
-             */
-
-            let name =
-                "";
-
-
-            const nameLink =
-                card.querySelector(
-                    ".name a"
-                );
-
-
-            if (nameLink) {
-
-                name =
-                    nameLink.textContent
-                        .replace(
-                            /\s+/g,
-                            " "
-                        )
-                        .trim();
-
-            }
-
-
-            /*
-             * URL
-             */
-
-            let url =
-                "";
-
-
-            if (nameLink) {
-
-                url =
-                    nameLink.getAttribute(
-                        "href"
-                    ) ||
-                    nameLink.href ||
-                    "";
-
-            }
-
-
-            /*
-             * FECHA
-             */
-
-            const dueDate =
-                getAttributeValue(
-                    card,
-                    "Data real de venciment"
-                );
-
-
-            /*
-             * PALABRAS
-             */
-
-            const words =
-                getAttributeValue(
-                    card,
-                    "Nombre de paraules Salt pro"
-                );
-
-
-            /*
-             * PERSONA
-             */
-
-            let person =
-                "";
-
-
-            const assigned =
-                card.querySelector(
-                    ".assigned-user .user a"
-                );
-
-
-            if (assigned) {
-
-                person =
-                    assigned.textContent
-                        .replace(
-                            /\s+/g,
-                            " "
-                        )
-                        .trim();
-
-            }
-
-
-            /*
-             * DEDUPLICACIÓN
-             */
-
-            if (
-                !tasks.has(
-                    dataId
-                )
-            ) {
-
-                tasks.set(
-
-                    dataId,
-
-                    {
-
-                        task:
-                            taskId,
-
-                        name:
-                            name,
-
-                        dueDate:
-                            dueDate,
-
-                        words:
-                            words,
-
-                        person:
-                            person,
-
-                        url:
-                            url
-
-                    }
-
-                );
-
-            }
-
-        }
-    );
-
-
-    return Array.from(
-        tasks.values()
-    );
-
-}
-
-
-/******************************************************************
- * CALCULAR INICIO DE TAREA
- ******************************************************************/
-
-function calculateTaskStart(
-    end,
-    duration
-) {
-
-    let cursor =
-        new Date(end);
-
-
-    let remaining =
-        duration;
-
-
-    while (
-        remaining >
-        0.000000001
-    ) {
-
-        /*
-         * Día laborable anterior.
-         */
-
-        let previousDay =
-            addDays(
-                normalizeDate(cursor),
-                -1
-            );
-
-
-        /*
-         * Saltar fin de semana.
-         */
-
-        while (
-            !isBusinessDay(
-                previousDay
-            )
-        ) {
-
-            previousDay =
-                addDays(
-                    previousDay,
-                    -1
-                );
-
-        }
-
-
-        /*
-         * Día completo.
-         */
-
-        if (
-            remaining >= 1
-        ) {
-
-            cursor =
-                new Date(
-                    previousDay
-                );
-
-
-            remaining -= 1;
-
-
-            continue;
-
-        }
-
-
-        /*
-         * Fracción de día.
-         */
-
-        cursor =
-            new Date(
-
-                previousDay.getTime() +
-
-                (
-                    1 -
-                    remaining
-                ) *
-
-                24 *
-                60 *
-                60 *
-                1000
-
-            );
-
-
-        remaining =
-            0;
-
-    }
-
-
-    return cursor;
-
-}
-
-
-/******************************************************************
- * CREAR LISTA DE DÍAS
- ******************************************************************/
-
-function createDateList(
-    startDate,
-    endDate
-) {
-
-    const dates =
-        [];
-
-
-    let current =
-        normalizeDate(
-            startDate
-        );
-
-
-    const end =
-        normalizeDate(
-            endDate
-        );
-
-
-    while (
-        current <=
-        end
-    ) {
-
-        dates.push(
-            new Date(current)
-        );
-
-
-        current =
-            addDays(
-                current,
-                1
-            );
-
-    }
-
-
-    return dates;
-
-}
-
-
-/******************************************************************
- * CABECERA DE MESES
- ******************************************************************/
-
-function createMonthHeader(
-    dates
-) {
-
-    const row =
-        document.createElement(
-            "div"
-        );
-
-
-    row.className =
-        "month-row";
-
-
-    const spacer =
-        document.createElement(
-            "div"
-        );
-
-
-    spacer.className =
-        "month-spacer";
-
-
-    row.appendChild(
-        spacer
-    );
-
-
-    let index =
-        0;
-
-
-    while (
-        index <
-        dates.length
-    ) {
-
-        const first =
-            dates[index];
-
-
-        let end =
-            index + 1;
-
-
-        while (
-
-            end <
-                dates.length &&
-
-            dates[end].getMonth() ===
-                first.getMonth() &&
-
-            dates[end].getFullYear() ===
-                first.getFullYear()
-
-        ) {
-
-            end++;
-
-        }
-
-
-        const count =
-            end - index;
-
-
-        const label =
-            document.createElement(
-                "div"
-            );
-
-
-        label.className =
-            "month-label";
-
-
-        label.style.width =
-            (
-                count *
-                CONFIG.DAY_WIDTH
-            ) +
-            "px";
-
-
-        label.style.minWidth =
-            (
-                count *
-                CONFIG.DAY_WIDTH
-            ) +
-            "px";
-
-
-        label.textContent =
-            formatMonth(
-                first
-            );
-
-
-        row.appendChild(
-            label
-        );
-
-
-        index =
-            end;
-
-    }
-
-
-    return row;
-
-}
-
-
-/******************************************************************
- * CABECERA DE DÍAS
- ******************************************************************/
-
-function createDayHeader(
-    dates
-) {
-
-    const header =
-        document.createElement(
-            "div"
-        );
-
-
-    header.className =
-        "gantt-header";
-
-
-    const personHeader =
-        document.createElement(
-            "div"
-        );
-
-
-    personHeader.className =
-        "person-header";
-
-
-    personHeader.textContent =
-        "Persona";
-
-
-    header.appendChild(
-        personHeader
-    );
-
-
-    const days =
-        document.createElement(
-            "div"
-        );
-
-
-    days.className =
-        "days-header";
-
-
-    const currentDay =
-        today();
-
-
-    dates.forEach(
-        date => {
-
-            const cell =
-                document.createElement(
-                    "div"
-                );
-
-
-            cell.className =
-                "day-header";
-
-
-            /*
-             * Hoy
-             */
-
-            if (
-                date.getTime() ===
-                currentDay.getTime()
-            ) {
-
-                cell.classList.add(
-                    "today"
-                );
-
-            }
-
-
-            /*
-             * Fin de semana
-             */
-
-            if (
-                !isBusinessDay(
-                    date
-                )
-            ) {
-
-                cell.classList.add(
-                    "weekend"
-                );
-
-            }
-
-
-            const number =
-                document.createElement(
-                    "div"
-                );
-
-
-            number.className =
-                "day-number";
-
-
-            number.textContent =
-                date.getDate();
-
-
-            const weekday =
-                document.createElement(
-                    "div"
-                );
-
-
-            weekday.className =
-                "weekday";
-
-
-            weekday.textContent =
-                date
-                    .toLocaleDateString(
-                        "es-ES",
-                        {
-                            weekday:
-                                "short"
-                        }
-                    )
-                    .replace(
-                        ".",
-                        ""
-                    )
-                    .substring(
-                        0,
-                        3
-                    );
-
-
-            cell.appendChild(
-                number
-            );
-
-
-            cell.appendChild(
-                weekday
-            );
-
-
-            days.appendChild(
-                cell
-            );
-
-        }
-    );
-
-
-    header.appendChild(
-        days
-    );
-
-
-    return header;
-
-}
-
-
-/******************************************************************
- * FONDO DE FINES DE SEMANA
- ******************************************************************/
-
-function addWeekendBackgrounds(
-    timeline,
-    dates
-) {
-
-    dates.forEach(
-        (
-            date,
-            index
-        ) => {
-
-            if (
-                !isBusinessDay(
-                    date
-                )
-            ) {
-
-                const weekend =
-                    document.createElement(
-                        "div"
-                    );
-
-
-                weekend.className =
-                    "weekend-column";
-
-
-                weekend.style.left =
-                    (
-                        index *
-                        CONFIG.DAY_WIDTH
-                    ) +
-                    "px";
-
-
-                weekend.style.width =
-                    CONFIG.DAY_WIDTH +
-                    "px";
-
-
-                timeline.appendChild(
-                    weekend
-                );
-
-            }
-
-
-            /*
-             * Línea de lunes
-             */
-
-            if (
-                date.getDay() ===
-                1
-            ) {
-
-                const line =
-                    document.createElement(
-                        "div"
-                    );
-
-
-                line.className =
-                    "monday-line";
-
-
-                line.style.left =
-                    (
-                        index *
-                        CONFIG.DAY_WIDTH
-                    ) +
-                    "px";
-
-
-                timeline.appendChild(
-                    line
-                );
-
-            }
-
-        }
-    );
-
-}
-
-
-/******************************************************************
- * ASIGNAR NIVELES
- ******************************************************************/
-
-function assignLevels(
-    tasks
-) {
-
-    const sorted =
-        [...tasks].sort(
-            (
-                a,
-                b
-            ) => {
-
-                const endDifference =
-                    a.end.getTime() -
-                    b.end.getTime();
-
-
-                if (
-                    endDifference !== 0
-                ) {
-
-                    return endDifference;
-
-                }
-
-
-                return (
-                    a.start.getTime() -
-                    b.start.getTime()
-                );
-
-            }
-        );
-
-
-    const levels =
-        [];
-
-
-    sorted.forEach(
-        task => {
-
-            let level =
-                0;
-
-
-            while (true) {
-
-                if (
-                    !levels[level]
-                ) {
-
-                    levels[level] =
-                        [];
-
-                }
-
-
-                const collision =
-                    levels[level]
-                        .some(
-                            other => {
-
-                                return (
-
-                                    task.start <
-                                        other.end &&
-
-                                    task.end >
-                                        other.start
-
-                                );
-
-                            }
-                        );
-
-
-                if (!collision) {
-
-                    levels[level].push(
-                        task
-                    );
-
-
-                    task.level =
-                        level;
-
-
-                    break;
-
-                }
-
-
-                level++;
-
-            }
-
-        }
-    );
-
-
-    return sorted;
-
-}
-
-
-/******************************************************************
- * MOSTRAR TOOLTIP
- ******************************************************************/
-
-function showTooltip(
-    task,
-    event
-) {
-
-    tooltip.innerHTML =
-
-        "<b>Tarea:</b> " +
-        escapeHTML(
-            task.task
-        ) +
-
-        "<br>" +
-
-        "<b>Nombre:</b> " +
-        escapeHTML(
-            task.name
-        ) +
-
-        "<br>" +
-
-        "<b>Persona:</b> " +
-        escapeHTML(
-            task.person
-        ) +
-
-        "<br>" +
-
-        "<b>Palabras:</b> " +
-        formatNumber(
-            task.wordsNumber
-        ) +
-
-        "<br>" +
-
-        "<b>Duración:</b> " +
-        task.duration
-            .toFixed(2)
-            .replace(
-                ".",
-                ","
-            ) +
-
-        " días laborables" +
-
-        "<br>" +
-
-        "<b>Vencimiento:</b> " +
-        formatDate(
-            task.due
-        );
-
-
-    tooltip.style.display =
-        "block";
-
-
-    moveTooltip(
-        event
-    );
-
-}
-
-
-/******************************************************************
- * MOVER TOOLTIP
- ******************************************************************/
-
-function moveTooltip(
-    event
-) {
-
-    tooltip.style.left =
-        (
-            event.clientX +
-            15
-        ) +
-        "px";
-
-
-    tooltip.style.top =
-        (
-            event.clientY +
-            15
-        ) +
-        "px";
-
-}
-
-
-/******************************************************************
- * CREAR BARRA
- ******************************************************************/
-
-function createTaskBar(
-    task,
-    globalStart,
-    timelineWidth,
-    colorIndex
-) {
-
-    /*
-     * ============================================================
-     * EXTREMO DERECHO
-     * ============================================================
-     *
-     * El vencimiento determina directamente
-     * la posición del borde derecho.
-     */
-
-    const endDays =
-        daysBetween(
-            globalStart,
-            task.end
-        );
-
-
-    /*
-     * Redondeo deliberado:
-     *
-     * todas las tareas con el mismo vencimiento
-     * terminan en exactamente el mismo píxel.
-     */
-
-    const rightPosition =
-        Math.round(
-            endDays *
-            CONFIG.DAY_WIDTH
-        );
-
-
-    /*
-     * ============================================================
-     * ANCHURA VISUAL
-     * ============================================================
-     */
-
-    const visualDays =
-        daysBetween(
-            task.start,
-            task.end
-        );
-
-
-    let width =
-        Math.round(
-            visualDays *
-            CONFIG.DAY_WIDTH
-        );
-
-
-    width =
-        Math.max(
-            4,
-            width
-        );
-
-
-    /*
-     * ============================================================
-     * BARRA
-     * ============================================================
-     */
-
-    const bar =
-        document.createElement(
-            "div"
-        );
-
-
-    bar.className =
-        "task-bar " +
-        "person-color-" +
-        (
-            colorIndex % 8
-        );
-
-
-    /*
-     * NO usamos left para determinar
-     * el extremo derecho.
-     */
-
-    bar.style.left =
-        "auto";
-
-
-    bar.style.right =
-        (
-            timelineWidth -
-            rightPosition
-        ) +
-        "px";
-
-
-    /*
-     * Recorte si empieza antes de hoy.
-     */
-
-    let visibleWidth =
-        width;
-
-
-    if (
-        task.start <
-        globalStart
-    ) {
-
-        visibleWidth =
-            rightPosition;
-
-    }
-
-
-    visibleWidth =
-        Math.max(
-            4,
-            Math.round(
-                visibleWidth
-            )
-        );
-
-
-    bar.style.width =
-        visibleWidth +
-        "px";
-
-
-    /*
-     * POSICIÓN VERTICAL
-     */
-
-    bar.style.top =
-        (
-            10 +
-            task.level *
-            (
-                CONFIG.TASK_HEIGHT +
-                CONFIG.TASK_VERTICAL_GAP
-            )
-        ) +
-        "px";
-
-
-    /*
-     * ============================================================
-     * TEXTO
-     * ============================================================
-     */
-
-    const id =
-        document.createElement(
-            "span"
-        );
-
-
-    id.className =
-        "task-id";
-
-
-    id.textContent =
-        task.task;
-
-
-    bar.appendChild(
-        id
-    );
-
-
-    const duration =
-        document.createElement(
-            "span"
-        );
-
-
-    duration.className =
-        "task-duration";
-
-
-    duration.textContent =
-        task.duration
-            .toFixed(2)
-            .replace(
-                ".",
-                ","
-            ) +
-        " d";
-
-
-    bar.appendChild(
+function prepareTasks(rawTasks) {
+  tasks = normaliseTasks(rawTasks)
+    .map(task => {
+      const due = parseDate(task.dueDate);
+      const duration = task.words / CONFIG.WORDS_PER_DAY;
+
+      return {
+        ...task,
+        due,
         duration
+      };
+    })
+    .filter(task => task.due);
+
+  if (!tasks.length) {
+    throw new Error("No hay tareas con una fecha de vencimiento válida.");
+  }
+
+  // "Current day" as requested for the timeline.
+  const today = startOfDay(new Date());
+
+  const latestDue = tasks.reduce(
+    (max, task) => task.due > max ? task.due : max,
+    tasks[0].due
+  );
+
+  globalStart = today;
+  globalEnd = latestDue;
+
+  // If all tasks are already overdue, still make a useful timeline.
+  if (globalStart > globalEnd) {
+    globalStart = tasks.reduce(
+      (min, task) => task.due < min ? task.due : min,
+      tasks[0].due
     );
+  }
 
-
-    /*
-     * ============================================================
-     * TOOLTIP
-     * ============================================================
-     */
-
-    bar.addEventListener(
-        "mouseenter",
-        event => {
-
-            showTooltip(
-                task,
-                event
-            );
-
-        }
-    );
-
-
-    bar.addEventListener(
-        "mousemove",
-        moveTooltip
-    );
-
-
-    bar.addEventListener(
-        "mouseleave",
-        () => {
-
-            tooltip.style.display =
-                "none";
-
-        }
-    );
-
-
-    /*
-     * ============================================================
-     * DOBLE CLIC
-     * ============================================================
-     */
-
-    if (
-        task.url
-    ) {
-
-        bar.addEventListener(
-            "dblclick",
-            () => {
-
-                window.open(
-                    task.url,
-                    "_blank"
-                );
-
-            }
-        );
-
-    }
-
-
-    return bar;
-
+  tasks.sort((a, b) => {
+    const pa = a.assigned || "Sin asignar";
+    const pb = b.assigned || "Sin asignar";
+    return pa.localeCompare(pb, "es") || a.due - b.due || a.taskId.localeCompare(b.taskId);
+  });
 }
 
-
-/******************************************************************
- * CREAR FILA DE PERSONA
- ******************************************************************/
-
-function createPersonRow(
-    person,
-    tasks,
-    globalStart,
-    timelineDates,
-    colorIndex
-) {
-
-    const row =
-        document.createElement(
-            "div"
-        );
-
-
-    row.className =
-        "person-row";
-
-
-    /*
-     * PERSONA
-     */
-
-    const personName =
-        document.createElement(
-            "div"
-        );
-
-
-    personName.className =
-        "person-name";
-
-
-    personName.textContent =
-        person;
-
-
-    row.appendChild(
-        personName
-    );
-
-
-    /*
-     * TIMELINE
-     */
-
-    const timeline =
-        document.createElement(
-            "div"
-        );
-
-
-    timeline.className =
-        "timeline";
-
-
-    const timelineWidth =
-        timelineDates.length *
-        CONFIG.DAY_WIDTH;
-
-
-    timeline.style.width =
-        timelineWidth +
-        "px";
-
-
-    /*
-     * Fines de semana
-     */
-
-    addWeekendBackgrounds(
-        timeline,
-        timelineDates
-    );
-
-
-    /*
-     * ============================================================
-     * PREPARAR TAREAS
-     * ============================================================
-     */
-
-    const prepared =
-        tasks
-
-            .map(
-                task => {
-
-                    const due =
-                        parseDate(
-                            task.dueDate
-                        );
-
-
-                    if (!due) {
-
-                        return null;
-
-                    }
-
-
-                    const words =
-                        parseWords(
-                            task.words
-                        );
-
-
-                    const duration =
-                        words /
-                        CONFIG.WORDS_PER_DAY;
-
-
-                    /*
-                     * El final está en el comienzo
-                     * del día posterior al vencimiento.
-                     */
-
-                    const end =
-                        addDays(
-                            due,
-                            1
-                        );
-
-
-                    /*
-                     * Calculamos el inicio
-                     * hacia atrás.
-                     */
-
-                    const start =
-                        calculateTaskStart(
-                            end,
-                            duration
-                        );
-
-
-                    return {
-
-                        ...task,
-
-                        due:
-                            due,
-
-                        wordsNumber:
-                            words,
-
-                        duration:
-                            duration,
-
-                        start:
-                            start,
-
-                        end:
-                            end
-
-                    };
-
-                }
-            )
-
-            .filter(
-                Boolean
-            );
-
-
-    /*
-     * NIVELES
-     */
-
-    assignLevels(
-        prepared
-    );
-
-
-    /*
-     * ALTURA
-     */
-
-    const maxLevel =
-        prepared.length
-            ? Math.max(
-                ...prepared.map(
-                    task =>
-                        task.level
-                )
-            )
-            : 0;
-
-
-    const rowHeight =
-        Math.max(
-
-            CONFIG.ROW_BASE_HEIGHT,
-
-            20 +
-            (
-                maxLevel + 1
-            ) *
-            (
-                CONFIG.TASK_HEIGHT +
-                CONFIG.TASK_VERTICAL_GAP
-            )
-
-        );
-
-
-    timeline.style.height =
-        rowHeight +
-        "px";
-
-
-    row.style.height =
-        rowHeight +
-        "px";
-
-
-    /*
-     * ============================================================
-     * BARRAS
-     * ============================================================
-     */
-
-    prepared.forEach(
-        task => {
-
-            if (
-                task.end <=
-                globalStart
-            ) {
-
-                return;
-
-            }
-
-
-            const bar =
-                createTaskBar(
-
-                    task,
-
-                    globalStart,
-
-                    timelineWidth,
-
-                    colorIndex
-
-                );
-
-
-            timeline.appendChild(
-                bar
-            );
-
-        }
-    );
-
-
-    row.appendChild(
-        timeline
-    );
-
-
-    return row;
-
+/* ---------- Gantt calculations ---------- */
+
+/*
+ * Returns the start datetime of a task by walking backwards over
+ * business days. Duration is measured in business days.
+ *
+ * The due date itself is a full business day available to the task.
+ * The visual right edge is always the beginning of the following day.
+ */
+function calculateTaskStart(due, duration) {
+  if (duration <= 0) return startOfDay(due);
+
+  let remaining = duration;
+  let cursor = startOfDay(due);
+
+  while (!isBusinessDay(cursor)) {
+    cursor = addDays(cursor, -1);
+  }
+
+  // Consume the due day backwards. Fractional duration is represented
+  // inside the business-day cell.
+  remaining -= 1;
+
+  if (remaining <= 0) {
+    return addDays(due, -(duration));
+  }
+
+  cursor = addDays(cursor, -1);
+
+  while (remaining > 0) {
+    if (isBusinessDay(cursor)) {
+      if (remaining <= 1) {
+        return addDays(cursor, -(1 - remaining));
+      }
+      remaining -= 1;
+    }
+    cursor = addDays(cursor, -1);
+  }
+
+  return addDays(cursor, 1);
 }
 
-
-/******************************************************************
- * GENERAR GANTT
- ******************************************************************/
-
-function generateGantt(
-    tasks
-) {
-
-    gantt.innerHTML =
-        "";
-
-
-    /*
-     * Tareas con fecha válida
-     */
-
-    const validTasks =
-        tasks
-
-            .map(
-                task => {
-
-                    const due =
-                        parseDate(
-                            task.dueDate
-                        );
-
-
-                    if (!due) {
-
-                        return null;
-
-                    }
-
-
-                    return {
-
-                        ...task,
-
-                        due:
-                            due
-
-                    };
-
-                }
-            )
-
-            .filter(
-                Boolean
-            );
-
-
-    if (
-        !validTasks.length
-    ) {
-
-        gantt.innerHTML =
-            "<p>" +
-            "No hay tareas con fecha válida." +
-            "</p>";
-
-
-        ganttContainer.style.display =
-            "block";
-
-
-        return;
-
-    }
-
-
-    /*
-     * Hoy
-     */
-
-    const globalStart =
-        today();
-
-
-    /*
-     * Último vencimiento
-     */
-
-    let lastDue =
-        new Date(
-            globalStart
-        );
-
-
-    validTasks.forEach(
-        task => {
-
-            if (
-                task.due >
-                lastDue
-            ) {
-
-                lastDue =
-                    new Date(
-                        task.due
-                    );
-
-            }
-
-        }
-    );
-
-
-    /*
-     * Días visibles
-     */
-
-    const dates =
-        createDateList(
-            globalStart,
-            lastDue
-        );
-
-
-    /*
-     * ============================================================
-     * AGRUPAR POR PERSONA
-     * ============================================================
-     */
-
-    const groups =
-        new Map();
-
-
-    validTasks.forEach(
-        task => {
-
-            const person =
-                task.person ||
-                "Sin asignar";
-
-
-            if (
-                !groups.has(
-                    person
-                )
-            ) {
-
-                groups.set(
-                    person,
-                    []
-                );
-
-            }
-
-
-            groups
-                .get(person)
-                .push(
-                    task
-                );
-
-        }
-    );
-
-
-    /*
-     * Personas ordenadas
-     */
-
-    const people =
-        Array.from(
-            groups.keys()
-        )
-        .sort(
-            (
-                a,
-                b
-            ) =>
-                a.localeCompare(
-                    b
-                )
-        );
-
-
-    /*
-     * CABECERAS
-     */
-
-    gantt.appendChild(
-        createMonthHeader(
-            dates
-        )
-    );
-
-
-    gantt.appendChild(
-        createDayHeader(
-            dates
-        )
-    );
-
-
-    /*
-     * FILAS
-     */
-
-    people.forEach(
-        (
-            person,
-            index
-        ) => {
-
-            const row =
-                createPersonRow(
-
-                    person,
-
-                    groups.get(
-                        person
-                    ),
-
-                    globalStart,
-
-                    dates,
-
-                    index
-
-                );
-
-
-            gantt.appendChild(
-                row
-            );
-
-        }
-    );
-
-
-    /*
-     * ============================================================
-     * RESUMEN
-     * ============================================================
-     */
-
-    const totalWords =
-        validTasks.reduce(
-            (
-                total,
-                task
-            ) => {
-
-                return (
-                    total +
-                    parseWords(
-                        task.words
-                    )
-                );
-
-            },
-            0
-        );
-
-
-    const totalEffort =
-        totalWords /
-        CONFIG.WORDS_PER_DAY;
-
-
-    summary.innerHTML =
-
-        "<strong>Hoy:</strong> " +
-        formatDate(
-            globalStart
-        ) +
-
-        " &nbsp; | &nbsp; " +
-
-        "<strong>Último vencimiento:</strong> " +
-        formatDate(
-            lastDue
-        ) +
-
-        " &nbsp; | &nbsp; " +
-
-        "<strong>Tareas:</strong> " +
-        validTasks.length +
-
-        " &nbsp; | &nbsp; " +
-
-        "<strong>Personas:</strong> " +
-        people.length +
-
-        " &nbsp; | &nbsp; " +
-
-        "<strong>Palabras:</strong> " +
-        formatNumber(
-            totalWords
-        ) +
-
-        " &nbsp; | &nbsp; " +
-
-        "<strong>Esfuerzo:</strong> " +
-        totalEffort
-            .toFixed(1)
-            .replace(
-                ".",
-                ","
-            ) +
-
-        " días laborables";
-
-
-    ganttContainer.style.display =
-        "block";
-
+function assignTaskGeometry(task) {
+  task.start = calculateTaskStart(task.due, task.duration);
+
+  // Critical semantic point:
+  // due date ends at the end of that calendar day.
+  // Therefore the bar's right boundary is the start of due+1.
+  task.end = addDays(task.due, 1);
 }
 
+/* ---------- Gantt rendering ---------- */
 
-/******************************************************************
- * CSV
- ******************************************************************/
+function buildDateArray(start, end) {
+  const dates = [];
+  let d = startOfDay(start);
 
-function createCSV(
-    tasks
-) {
+  while (d <= end) {
+    dates.push(new Date(d));
+    d = addDays(d, 1);
+  }
 
-    const headers = [
-
-        "Tasca",
-
-        "Nom",
-
-        "Data real de venciment",
-
-        "Nombre de paraules Salt pro",
-
-        "Persona assignada",
-
-        "URL"
-
-    ];
-
-
-    let csv =
-        "\uFEFF";
-
-
-    csv +=
-
-        headers
-            .map(
-                csvEscape
-            )
-            .join(";") +
-
-        "\r\n";
-
-
-    tasks.forEach(
-        task => {
-
-            /*
-             * AQUÍ CONVERTIMOS LA FECHA
-             *
-             * 16 Nov 2026
-             *
-             * →
-             *
-             * 16/11/2026
-             */
-
-            const csvDate =
-                formatCSVDate(
-                    task.dueDate
-                );
-
-
-            csv +=
-
-                [
-
-                    task.task,
-
-                    task.name,
-
-                    csvDate,
-
-                    task.words,
-
-                    task.person,
-
-                    task.url
-
-                ]
-
-                    .map(
-                        csvEscape
-                    )
-
-                    .join(";") +
-
-                "\r\n";
-
-        }
-    );
-
-
-    return csv;
-
+  return dates;
 }
 
+function createDayHeader(date) {
+  const el = document.createElement("div");
+  el.className = "day-header";
 
-/******************************************************************
- * ESCAPAR CSV
- ******************************************************************/
+  if (!isBusinessDay(date)) el.classList.add("weekend");
+  if (date.getDay() === 1) el.classList.add("monday");
 
-function csvEscape(
-    value
-) {
+  el.textContent = date.getDate();
+  el.title = formatDate(date);
 
-    if (
-        value === null ||
-        value === undefined
-    ) {
-
-        return "";
-
-    }
-
-
-    const text =
-        String(value);
-
-
-    if (
-        text.includes(";") ||
-        text.includes('"') ||
-        text.includes("\n") ||
-        text.includes("\r")
-    ) {
-
-        return (
-
-            '"' +
-
-            text.replace(
-                /"/g,
-                '""'
-            ) +
-
-            '"'
-
-        );
-
-    }
-
-
-    return text;
-
+  return el;
 }
 
+function createMonthCells(dates) {
+  const cells = [];
+  let currentMonth = null;
+  let currentCount = 0;
 
-/******************************************************************
- * DESCARGAR CSV
- ******************************************************************/
+  function flush() {
+    if (!currentMonth) return;
+    const cell = document.createElement("div");
+    cell.className = "month-cell";
+    cell.style.flexBasis = `${currentCount * CONFIG.DAY_WIDTH}px`;
+    cell.style.width = `${currentCount * CONFIG.DAY_WIDTH}px`;
+    cell.textContent = `${MONTH_NAMES[currentMonth.month]} ${currentMonth.year}`;
+    cells.push(cell);
+  }
 
-function downloadCSV(
-    csv
-) {
+  for (const date of dates) {
+    const key = `${date.getFullYear()}-${date.getMonth()}`;
 
-    const blob =
-        new Blob(
+    if (!currentMonth || currentMonth.key !== key) {
+      flush();
+      currentMonth = {
+        key,
+        month: date.getMonth(),
+        year: date.getFullYear()
+      };
+      currentCount = 1;
+    } else {
+      currentCount++;
+    }
+  }
 
-            [csv],
-
-            {
-                type:
-                    "text/csv;charset=utf-8;"
-            }
-
-        );
-
-
-    const url =
-        URL.createObjectURL(
-            blob
-        );
-
-
-    const link =
-        document.createElement(
-            "a"
-        );
-
-
-    link.href =
-        url;
-
-
-    link.download =
-        CONFIG.CSV_FILENAME;
-
-
-    document.body.appendChild(
-        link
-    );
-
-
-    link.click();
-
-
-    document.body.removeChild(
-        link
-    );
-
-
-    URL.revokeObjectURL(
-        url
-    );
-
+  flush();
+  return cells;
 }
 
+function createTimelineGrid(dates, height) {
+  const grid = document.createElement("div");
+  grid.className = "timeline-grid";
+  grid.style.height = `${height}px`;
 
-/******************************************************************
- * PROCESAR HTML
- ******************************************************************/
+  dates.forEach(date => {
+    const col = document.createElement("div");
+    col.className = "day-column";
+    grid.appendChild(col);
+  });
 
-function processHTML(
-    html,
-    source
-) {
-
-    try {
-
-        setStatus(
-            "Procesando " +
-            source +
-            "..."
-        );
-
-
-        const tasks =
-            extractTasks(
-                html
-            );
-
-
-        if (!tasks.length) {
-
-            ganttContainer.style.display =
-                "none";
-
-
-            setStatus(
-                "No se han encontrado tareas.",
-                "error"
-            );
-
-
-            return;
-
-        }
-
-
-        /*
-         * CSV
-         */
-
-        const csv =
-            createCSV(
-                tasks
-            );
-
-
-        downloadCSV(
-            csv
-        );
-
-
-        /*
-         * GANTT
-         */
-
-        generateGantt(
-            tasks
-        );
-
-
-        /*
-         * ESTADO
-         */
-
-        setStatus(
-
-            "Proceso completado correctamente.\n\n" +
-
-            "Tareas encontradas: " +
-            tasks.length +
-
-            "\nCSV generado: " +
-            CONFIG.CSV_FILENAME,
-
-            "success"
-
-        );
-
-
-        console.log(
-            "Tareas extraídas:",
-            tasks
-        );
-
-
-        console.table(
-            tasks
-        );
-
+  dates.forEach((date, index) => {
+    if (!isBusinessDay(date)) {
+      const weekend = document.createElement("div");
+      weekend.className = "weekend-column";
+      weekend.style.left = `${index * CONFIG.DAY_WIDTH}px`;
+      weekend.style.width = `${CONFIG.DAY_WIDTH}px`;
+      grid.appendChild(weekend);
     }
 
-    catch (error) {
-
-        console.error(
-            error
-        );
-
-
-        setStatus(
-
-            "Se ha producido un error:\n\n" +
-            error.message,
-
-            "error"
-
-        );
-
+    if (date.getDay() === 1) {
+      const line = document.createElement("div");
+      line.className = "monday-line";
+      line.style.left = `${index * CONFIG.DAY_WIDTH}px`;
+      grid.appendChild(line);
     }
+  });
 
+  return grid;
 }
 
+function createTaskBar(task, timelineWidth) {
+  const bar = document.createElement("div");
+  bar.className = "task-bar";
 
-/******************************************************************
- * FICHERO LOCAL
- ******************************************************************/
+  const startOffset = daysBetween(globalStart, task.start);
+  const endOffset = daysBetween(globalStart, task.end);
 
-processFileButton.addEventListener(
-    "click",
-    () => {
+  const leftPosition = Math.round(startOffset * CONFIG.DAY_WIDTH);
 
-        const file =
-            fileInput.files[0];
+  /*
+   * Anchor the RIGHT edge directly.
+   *
+   * This avoids cumulative/fractional rounding drift when several short
+   * tasks end on the same date and are placed on different vertical lines.
+   */
+  const rightPosition = Math.round(endOffset * CONFIG.DAY_WIDTH);
 
+  const width = Math.max(
+    4,
+    rightPosition - leftPosition
+  );
 
-        if (!file) {
+  bar.style.left = `${leftPosition}px`;
+  bar.style.width = `${width}px`;
 
-            setStatus(
-                "Selecciona primero un fichero HTML.",
-                "error"
-            );
+  const idSpan = document.createElement("span");
+  idSpan.className = "task-id";
+  idSpan.textContent = `#${task.taskId}`;
 
+  const titleSpan = document.createElement("span");
+  titleSpan.textContent = task.name || task.title || "";
 
-            return;
+  bar.appendChild(idSpan);
+  bar.appendChild(titleSpan);
 
-        }
+  return bar;
+}
 
+function buildTooltip(task) {
+  return `
+    <div><strong>Tarea:</strong> #${escapeHtml(task.taskId)}</div>
+    <div><strong>Nombre:</strong> ${escapeHtml(task.name || task.title || "")}</div>
+    <div><strong>Persona:</strong> ${escapeHtml(task.assigned || "Sin asignar")}</div>
+    <div><strong>Palabras:</strong> ${formatNumber(task.words)}</div>
+    <div><strong>Duración:</strong> ${formatDuration(task.duration)}</div>
+    <div><strong>Vencimiento:</strong> ${escapeHtml(formatDate(task.due))}</div>
+  `;
+}
 
-        const reader =
-            new FileReader();
+function formatNumber(n) {
+  return Number(n || 0).toLocaleString("es-ES");
+}
 
+function formatDuration(days) {
+  if (!Number.isFinite(days)) return "—";
+  if (days < 0.01) return "< 0,01 días";
+  return `${days.toLocaleString("es-ES", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  })} días laborables`;
+}
 
-        reader.onload =
-            event => {
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
-                processHTML(
+function renderGantt() {
+  tasks.forEach(assignTaskGeometry);
 
-                    event.target.result,
+  const dates = buildDateArray(globalStart, globalEnd);
+  const timelineWidth = dates.length * CONFIG.DAY_WIDTH;
 
-                    file.name
+  const groups = new Map();
 
-                );
+  for (const task of tasks) {
+    const person = task.assigned || "Sin asignar";
+    if (!groups.has(person)) groups.set(person, []);
+    groups.get(person).push(task);
+  }
 
-            };
+  const inner = document.createElement("div");
+  inner.className = "gantt-inner";
+  inner.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
 
+  const scroll = document.createElement("div");
+  scroll.className = "gantt-scroll";
 
-        reader.onerror =
-            () => {
+  // Day header
+  const header = document.createElement("div");
+  header.className = "gantt-header";
+  header.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
 
-                setStatus(
-                    "No se ha podido leer el fichero.",
-                    "error"
-                );
+  const personHeader = document.createElement("div");
+  personHeader.className = "person-header";
+  personHeader.textContent = "Persona";
+  header.appendChild(personHeader);
 
-            };
+  dates.forEach(date => header.appendChild(createDayHeader(date)));
 
+  // Month row
+  const monthRow = document.createElement("div");
+  monthRow.className = "month-row";
+  monthRow.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
 
-        reader.readAsText(
-            file,
-            "UTF-8"
-        );
+  const monthSpacer = document.createElement("div");
+  monthSpacer.className = "month-spacer";
+  monthRow.appendChild(monthSpacer);
 
+  createMonthCells(dates).forEach(cell => monthRow.appendChild(cell));
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "gantt-body";
+  body.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
+
+  for (const [person, personTasks] of groups) {
+    const rowHeight = Math.max(
+      CONFIG.ROW_BASE_HEIGHT,
+      20 + personTasks.length * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)
+    );
+
+    const row = document.createElement("div");
+    row.className = "person-row";
+    row.style.height = `${rowHeight}px`;
+
+    const name = document.createElement("div");
+    name.className = "person-name";
+    name.textContent = person;
+
+    const timeline = document.createElement("div");
+    timeline.className = "timeline-row";
+    timeline.style.width = `${timelineWidth}px`;
+    timeline.style.height = `${rowHeight}px`;
+
+    timeline.appendChild(createTimelineGrid(dates, rowHeight));
+
+    personTasks.forEach((task, index) => {
+      const bar = createTaskBar(task, timelineWidth);
+      bar.style.top = `${10 + index * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
+
+      bar.addEventListener("mouseenter", event => {
+        tooltip.innerHTML = buildTooltip(task);
+        tooltip.classList.remove("hidden");
+        positionTooltip(event);
+      });
+
+      bar.addEventListener("mousemove", positionTooltip);
+      bar.addEventListener("mouseleave", () => tooltip.classList.add("hidden"));
+
+      if (task.url) {
+        bar.addEventListener("dblclick", () => {
+          window.open(task.url, "_blank", "noopener,noreferrer");
+        });
+      }
+
+      timeline.appendChild(bar);
+    });
+
+    row.appendChild(name);
+    row.appendChild(timeline);
+    body.appendChild(row);
+  }
+
+  inner.appendChild(header);
+  inner.appendChild(monthRow);
+  inner.appendChild(body);
+  scroll.appendChild(inner);
+
+  ganttContainer.innerHTML = "";
+  ganttContainer.appendChild(scroll);
+}
+
+function positionTooltip(event) {
+  const margin = 14;
+  let x = event.clientX + margin;
+  let y = event.clientY + margin;
+
+  const rect = tooltip.getBoundingClientRect();
+
+  if (x + rect.width > window.innerWidth - margin) {
+    x = event.clientX - rect.width - margin;
+  }
+
+  if (y + rect.height > window.innerHeight - margin) {
+    y = event.clientY - rect.height - margin;
+  }
+
+  tooltip.style.left = `${Math.max(margin, x)}px`;
+  tooltip.style.top = `${Math.max(margin, y)}px`;
+}
+
+/* ---------- Summary ---------- */
+
+function updateSummary() {
+  const people = new Set(tasks.map(t => t.assigned || "Sin asignar"));
+  const words = tasks.reduce((sum, t) => sum + (Number(t.words) || 0), 0);
+  const latest = tasks.reduce(
+    (max, t) => !max || t.due > max ? t.due : max,
+    null
+  );
+
+  document.getElementById("taskCount").textContent = tasks.length;
+  document.getElementById("personCount").textContent = people.size;
+  document.getElementById("wordCount").textContent = formatNumber(words);
+  document.getElementById("lastDueDate").textContent = formatDate(latest);
+
+  downloadCsvBtn.disabled = false;
+}
+
+/* ---------- CSV ---------- */
+
+function csvEscape(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+function makeCSV() {
+  const headers = [
+    "Tasca",
+    "Nom",
+    "Data real de venciment",
+    "Nombre de paraules Salt pro",
+    "Persona assignada"
+  ];
+
+  const lines = [
+    headers.map(csvEscape).join(";"),
+    ...tasks.map(task => [
+      task.taskId,
+      task.name || task.title || "",
+      formatDate(task.due),
+      task.words || "",
+      task.assigned || ""
+    ].map(csvEscape).join(";"))
+  ];
+
+  return "\ufeff" + lines.join("\r\n");
+}
+
+function downloadCSV() {
+  const blob = new Blob([makeCSV()], {
+    type: "text/csv;charset=utf-8"
+  });
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = CONFIG.CSV_FILENAME;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------- Main loading pipeline ---------- */
+
+function displayTasks(rawTasks, source = "HTML") {
+  try {
+    prepareTasks(rawTasks);
+    updateSummary();
+    renderGantt();
+
+    if (source === "extension") {
+      document.getElementById("extensionInfo").classList.remove("hidden");
+      setStatus(
+        `✓ ${tasks.length} tareas recibidas desde la extensión. Lectura 100 % local.`,
+        "success"
+      );
+    } else {
+      document.getElementById("extensionInfo").classList.add("hidden");
+      setStatus(`✓ ${tasks.length} tareas cargadas correctamente.`, "success");
     }
-);
+  } catch (error) {
+    console.error(error);
+    setStatus("Error: " + error.message, "error");
+  }
+}
 
+htmlFile.addEventListener("change", async event => {
+  const file = event.target.files?.[0];
+  if (!file) return;
 
-/******************************************************************
- * URL
- ******************************************************************/
+  setStatus("Leyendo archivo HTML local…");
 
-processUrlButton.addEventListener(
-    "click",
-    async () => {
+  try {
+    const html = await file.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
 
-        const url =
-            urlInput.value.trim();
+    const extracted = extractTasksFromDocument(doc);
 
-
-        if (!url) {
-
-            setStatus(
-                "Introduce una URL.",
-                "error"
-            );
-
-
-            return;
-
-        }
-
-
-        try {
-
-            setStatus(
-                "Leyendo URL..."
-            );
-
-
-            const response =
-                await fetch(
-
-                    url,
-
-                    {
-                        credentials:
-                            "include"
-                    }
-
-                );
-
-
-            if (!response.ok) {
-
-                throw new Error(
-
-                    "HTTP " +
-                    response.status +
-                    " " +
-                    response.statusText
-
-                );
-
-            }
-
-
-            const html =
-                await response.text();
-
-
-            processHTML(
-                html,
-                url
-            );
-
-        }
-
-        catch (error) {
-
-            console.error(
-                error
-            );
-
-
-            setStatus(
-
-                "No se ha podido leer la URL.\n\n" +
-
-                error.message +
-
-                "\n\n" +
-
-                "Si aparece un error de CORS, " +
-                "utiliza el fichero HTML guardado.",
-
-                "error"
-
-            );
-
-        }
-
+    if (!extracted.length) {
+      throw new Error("No se encontraron tarjetas .issue-card[data-id] en el archivo.");
     }
-);
 
+    displayTasks(extracted, "HTML");
+  } catch (error) {
+    console.error(error);
+    setStatus("Error: " + error.message, "error");
+  }
+});
+
+loadUrlBtn.addEventListener("click", async () => {
+  const url = urlInput.value.trim();
+  if (!url) {
+    setStatus("Introduce una URL.", "error");
+    return;
+  }
+
+  setStatus("Intentando cargar la URL…");
+
+  try {
+    const response = await fetch(url, {
+      credentials: "include"
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const html = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    const extracted = extractTasksFromDocument(doc);
+
+    if (!extracted.length) {
+      throw new Error(
+        "La página se ha descargado, pero no contiene tarjetas reconocibles."
+      );
+    }
+
+    displayTasks(extracted, "HTML");
+  } catch (error) {
+    console.error(error);
+    setStatus(
+      "No se ha podido leer la URL desde el navegador. " +
+      "Si GVA requiere autenticación/CORS, usa la extensión o carga el HTML local.",
+      "error"
+    );
+  }
+});
+
+downloadCsvBtn.addEventListener("click", downloadCSV);
+
+/* ---------- Initialisation ---------- */
+
+// Priority 1: data passed by the extension.
+// This happens before any URL loading and therefore does not call GVA.
+const extensionTasks = getTasksFromExtension();
+
+if (extensionTasks) {
+  displayTasks(extensionTasks, "extension");
+} else {
+  setStatus("Esperando datos…");
+}
