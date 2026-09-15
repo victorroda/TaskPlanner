@@ -258,41 +258,42 @@ function extractTasksFromDocument(doc) {
 
 async function getTasksFromExtension() {
   const hash = window.location.hash || "";
-  if (!hash.startsWith("#data=") && !hash.startsWith("#data-gzip=")) return null;
+  if (!hash.startsWith("#data-gzip=") && !hash.startsWith("#data=")) return null;
 
   try {
-    const prefix = hash.startsWith("#data-gzip=") ? "#data-gzip=" : "#data=";
+    const gzip = hash.startsWith("#data-gzip=");
+    const prefix = gzip ? "#data-gzip=" : "#data=";
     const encoded = decodeURIComponent(hash.slice(prefix.length));
+
     const binary = atob(encoded);
     const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
 
-    // The working extension may label a gzip payload as #data-gzip=.
-    // Also detect gzip by its magic bytes, so older variants are accepted.
-    const isGzip = prefix === "#data-gzip=" || (bytes[0] === 0x1f && bytes[1] === 0x8b);
+    let json;
 
-    if (isGzip) {
+    if (gzip) {
       if (!("DecompressionStream" in window)) {
-        throw new Error("El navegador no admite DecompressionStream.");
+        throw new Error("DecompressionStream no está disponible en este navegador.");
       }
-      const text = await new Response(
-        new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))
-      ).text();
-      const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed) || !parsed.length) {
-        throw new Error("El payload descomprimido no contiene una lista de tareas.");
-      }
-      console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
-      return parsed;
+
+      const stream = new Blob([bytes]).stream().pipeThrough(
+        new DecompressionStream("gzip")
+      );
+
+      json = await new Response(stream).text();
+    } else {
+      // Plain UTF-8 Base64 used by the non-gzip fallback.
+      json = new TextDecoder("utf-8").decode(bytes);
     }
 
-    // Plain UTF-8 JSON payload used by older extension versions.
-    const json = new TextDecoder("utf-8").decode(bytes);
     const parsed = JSON.parse(json);
+
     if (!Array.isArray(parsed) || !parsed.length) {
-      throw new Error("El payload no contiene una lista de tareas.");
+      throw new Error("El payload decodificado no contiene una lista de tareas.");
     }
+
     console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
     return parsed;
+
   } catch (error) {
     console.error("[GVA Planning] Error leyendo datos de la extensión:", error);
     setStatus("Error leyendo los datos de la extensión: " + error.message, "error");
@@ -825,7 +826,7 @@ downloadCsvBtn.addEventListener("click", downloadCSV);
 
 // Priority 1: data passed by the extension.
 // This happens before any URL loading and therefore does not call GVA.
-Promise.resolve(getTasksFromExtension()).then(extensionTasks => {
+getTasksFromExtension().then(extensionTasks => {
   if (Array.isArray(extensionTasks)) {
     displayTasks(extensionTasks, "extension");
   } else if (!window.location.hash) {
