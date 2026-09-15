@@ -591,7 +591,7 @@ function renderGantt() {
     timeline.appendChild(createTimelineGrid(dates, rowHeight));
 
     personTasks.forEach((task, index) => {
-      const bar = createTaskBar(task, timelineWidth);
+      const bar = createTaskBar(task, globalStart, dates.length);
       bar.style.top = `${10 + index * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
 
       bar.addEventListener("mouseenter", event => {
