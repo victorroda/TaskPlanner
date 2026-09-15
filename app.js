@@ -587,11 +587,15 @@ function createTaskBar(task, timelineWidth) {
     calculateTaskStart(task.due, task.duration)
   );
 
-  const width = Math.max(1, rightPosition - leftPosition);
+  // Visual minimum: tasks below 0.5 working days are drawn with the
+  // width of 0.5 working days so they remain easy to see. Their real
+  // scheduling duration remains unchanged in task.duration.
+  const visualDuration = Math.max(task.duration, 0.5);
+  const visualStart = calculateTaskStart(task.due, visualDuration);
+  const visualLeft = calendarPixelPosition(visualStart);
+  const width = Math.max(1, rightPosition - visualLeft);
 
-  // Inline box model removes any dependency on cached/overridden CSS.
-  // This is especially important for very short tasks: their padding/text
-  // must never increase the rendered width beyond the calculated width.
+  // Inline box model prevents the text/content from changing the geometry.
   bar.style.boxSizing = "border-box";
   bar.style.minWidth = "0";
   bar.style.maxWidth = `${width}px`;
