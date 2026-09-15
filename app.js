@@ -529,14 +529,58 @@ function calendarPixelPosition(date) {
   return (date - startOfDay(globalStart)) / 86400000 * CONFIG.DAY_WIDTH;
 }
 
+function businessDurationInCalendarDays(start, duration) {
+  // Convert a duration expressed in working days into the corresponding
+  // calendar interval while skipping weekends.
+  if (duration <= 0) return 0;
+
+  let remaining = duration;
+  let cursor = new Date(start);
+
+  while (remaining > 0) {
+    // A fractional start may fall inside a working day.
+    if (!isBusinessDay(cursor)) {
+      cursor = addDays(startOfDay(cursor), 1);
+      continue;
+    }
+
+    const dayStart = startOfDay(cursor);
+    const elapsed = (cursor - dayStart) / 86400000;
+    const available = 1 - elapsed;
+
+    if (remaining <= available) {
+      return (cursor - startOfDay(start)) / 86400000 + remaining;
+    }
+
+    remaining -= available;
+    cursor = addDays(dayStart, 1);
+
+    while (!isBusinessDay(cursor)) {
+      cursor = addDays(cursor, 1);
+    }
+  }
+
+  return (cursor - startOfDay(start)) / 86400000;
+}
+
+function calendarPixelPosition(date) {
+  return ((date - startOfDay(globalStart)) / 86400000) * CONFIG.DAY_WIDTH;
+}
+
 function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  // Exact calendar positions. Crucially, width is based on the task's
-  // working-time duration, not on a rounded minimum calendar span.
-  const leftPosition = calendarPixelPosition(task.start);
-  const rightPosition = calendarPixelPosition(task.end);
+  // RIGHT EDGE: determined exclusively by the due date.
+  // A due date of the 12th ends exactly at the boundary between
+  // the 12th and the 13th.
+  const rightPosition = calendarPixelPosition(addDays(task.due, 1));
+
+  // LEFT EDGE: duration measured backwards in working days from the
+  // common due-date boundary. Thus tasks with the same due date always
+  // share exactly the same right edge.
+  const leftDate = calculateTaskStart(task.due, task.duration);
+  const leftPosition = calendarPixelPosition(leftDate);
 
   bar.style.left = `${leftPosition}px`;
   bar.style.width = `${Math.max(2, rightPosition - leftPosition)}px`;
