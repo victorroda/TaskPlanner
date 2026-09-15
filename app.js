@@ -1,6 +1,7 @@
 /* ============================================================
    GVA PLANNING
    - Reads local HTML files
+   - Optionally tries the URL supplied by the user
    - Accepts task data from the Chrome/Edge extension via #data=
    - Gantt: 8000 words / business day
    - Due date is the END of that day: right edge = next calendar day
@@ -32,47 +33,12 @@ let globalStart = null;
 let globalEnd = null;
 
 const htmlFile = document.getElementById("htmlFile");
+const urlInput = document.getElementById("urlInput");
+const loadUrlBtn = document.getElementById("loadUrlBtn");
 const downloadCsvBtn = document.getElementById("downloadCsvBtn");
 const statusEl = document.getElementById("status");
 const ganttContainer = document.getElementById("ganttContainer");
 const tooltip = document.getElementById("tooltip");
-
-async function getTasksFromExtension() {
-  const hash = window.location.hash || "";
-
-  try {
-    if (hash.startsWith("#data-gzip=")) {
-      const encoded = decodeURIComponent(hash.slice("#data-gzip=".length));
-      const binary = atob(encoded);
-      const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
-
-      if (!("DecompressionStream" in window)) {
-        throw new Error("Este navegador no soporta la descompresión de datos.");
-      }
-
-      const ds = new DecompressionStream("gzip");
-      const writer = ds.writable.getWriter();
-      writer.write(bytes);
-      writer.close();
-
-      const json = await new Response(ds.readable).text();
-      const parsed = JSON.parse(json);
-      return Array.isArray(parsed) ? parsed : null;
-    }
-
-    if (hash.startsWith("#data=")) {
-      const encoded = decodeURIComponent(hash.slice("#data=".length));
-      const json = decodeURIComponent(escape(atob(encoded)));
-      const parsed = JSON.parse(json);
-      return Array.isArray(parsed) ? parsed : null;
-    }
-
-    return null;
-  } catch (error) {
-    console.error("No se pudieron leer los datos de la extensión:", error);
-    return { __error: "Error leyendo los datos enviados por la extensión." };
-  }
-}
 
 function setStatus(text, type = "") {
   statusEl.textContent = text;
@@ -133,19 +99,317 @@ function addDays(date, days) {
 }
 
 function isBusinessDay(date) {
+  const day = date.getDay();
+  return day !== 0 && day !== 6;
+}
+
+function formatDate(date) {
+  if (!date) return "";
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
+function formatMonth(date) {
+  return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+}
+
+function daysBetween(a, b) {
+  const ms = startOfDay(b) - startOfDay(a);
+  return Math.round(ms / 86400000);
+}
+
+function parseWords(value) {
+  let text = cleanText(value).replace(/\u00a0/g, " ");
+  if (!text) return 0;
+
+  text = text.replace(/[^\d.,-]/g, "");
+
+  if (text.includes(",") && text.includes(".")) {
+    text = text.replace(/\./g, "").replace(",", ".");
+  } else if (text.includes(",")) {
+    text = text.replace(/,/g, "");
+  } else if (text.includes(".") && /^\d+\.\d{3}$/.test(text)) {
+    text = text.replace(".", "");
+  }
+
+  const n = Number(text);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/* ---------- Extraction from an HTML document ---------- */
+
+function getAttributeValue(card, labels) {
+  const wanted = labels.map(x => x.toLowerCase());
+
+  for (const b of card.querySelectorAll("b, strong, label")) {
+    const label = cleanText(b.textContent).toLowerCase().replace(/:$/, "");
+    if (!wanted.includes(label)) continue;
+
+    let node = b.nextSibling;
+
+    while (node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const t = cleanText(node.textContent);
+        if (t) return t;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const t = cleanText(node.textContent);
+        if (t) return t;
+      }
+      node = node.nextSibling;
+    }
+
+    const parent = b.parentElement;
+    if (parent) {
+      const clone = parent.cloneNode(true);
+      clone.querySelectorAll("b, strong, label").forEach(x => x.remove());
+      const t = cleanText(clone.textContent);
+      if (t) return t;
+    }
+  }
+
+  return "";
+}
+
+function extractIssueId(card) {
+  const dataId = card.getAttribute("data-id") || "";
+
+  const idEl = card.querySelector(".issue-id");
+  const idText = cleanText(idEl?.textContent);
+  const match = idText.match(/#(\d+)/);
+  if (match) return match[1];
+
+  const link = card.querySelector("a[href*='/issues/']");
+  const hrefMatch = (link?.getAttribute("href") || "").match(/\/issues\/(\d+)/);
+  if (hrefMatch) return hrefMatch[1];
+
+  if (/^\d+$/.test(dataId)) return dataId;
+
+  const cardMatch = cleanText(card.textContent).match(/#(\d+)/);
+  return cardMatch ? cardMatch[1] : "";
+}
+
+function extractTaskFromCard(card) {
+  const taskId = extractIssueId(card);
+
+  const name =
+    cleanText(card.querySelector("p.name a")?.textContent) ||
+    cleanText(card.querySelector("p.name")?.textContent);
+
+  const dueDate =
+    getAttributeValue(card, [
+      "Data real de venciment",
+      "Fecha real de vencimiento",
+      "Real due date",
+      "Due date"
+    ]);
+
+  const wordsText =
+    getAttributeValue(card, [
+      "Nombre de paraules Salt pro",
+      "Número de palabras Salt pro",
+      "Salt pro words",
+      "Words"
+    ]);
+
+  // The actual GVA HTML stores the assignee in:
+  // <p class="info assigned-user"><span class="user"><a>imes xx</a></span>
+  const assigned =
+    cleanText(card.querySelector(".assigned-user .user a")?.textContent) ||
+    getAttributeValue(card, [
+      "Persona assignada",
+      "Persona asignada",
+      "Assigned to",
+      "Assignee"
+    ]);
+
+  const issueLink =
+    card.querySelector("p.name a[href*='/issues/']")?.href ||
+    card.querySelector("a[href*='/issues/']")?.href ||
+    "";
+
+  return {
+    taskId,
+    title: name,
+    name,
+    dueDate,
+    words: parseWords(wordsText),
+    assigned: normaliseAssignee(assigned),
+    url: issueLink
+  };
+}
+
+function extractTasksFromDocument(doc) {
+  const cards = Array.from(doc.querySelectorAll(".issue-card[data-id]"));
+  const seen = new Set();
+  const result = [];
+
+  for (const card of cards) {
+    const task = extractTaskFromCard(card);
+    if (!task.taskId || seen.has(task.taskId)) continue;
+
+    seen.add(task.taskId);
+    result.push(task);
+  }
+
+  return result;
+}
+
+/* ---------- Extension input ---------- */
+
+async function getTasksFromExtension() {
+  const hash = window.location.hash || "";
+  try {
+    if (hash.startsWith("#data-gzip=")) {
+      const encoded = decodeURIComponent(hash.slice("#data-gzip=".length));
+      const binary = atob(encoded);
+      const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+      if (!("DecompressionStream" in window)) {
+        throw new Error("Este navegador no soporta la descompresión de datos.");
+      }
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const json = await new Response(ds.readable).text();
+      const parsed = JSON.parse(json);
+      return Array.isArray(parsed) ? parsed : null;
+    }
+    if (hash.startsWith("#data=")) {
+      const encoded = decodeURIComponent(hash.slice("#data=".length));
+      const json = decodeURIComponent(escape(atob(encoded)));
+      const parsed = JSON.parse(json);
+      return Array.isArray(parsed) ? parsed : null;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error leyendo datos de la extensión:", error);
+    return { __error: "Error leyendo los datos enviados por la extensión." };
+  }
+}
+
+/* ---------- Normalisation ---------- */
+
+function normaliseAssignee(value) {
+  const text = cleanText(value);
+  if (!text) return "Sin asignar";
+
+  const key = text
+    .normalize("NFD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+  if (
+    key === "sin asignar" ||
+    key === "sin assignar" ||
+    key === "no asignada" ||
+    key === "no asignado" ||
+    key === "unassigned" ||
+    key === "none" ||
+    key === "-" ||
+    key === "—"
+  ) {
+    return "Sin asignar";
+  }
+
+  return text;
+}
+
+function normaliseTasks(rawTasks) {
+  const seen = new Set();
+
+  return rawTasks
+    .map(t => ({
+      taskId: String(t.taskId || t.id || "").trim(),
+      title: cleanText(t.title || ""),
+      name: cleanText(t.name || t.title || ""),
+      dueDate: cleanText(t.dueDate || ""),
+      words: Number(t.words) || parseWords(t.words),
+      assigned: normaliseAssignee(t.assigned || t.person || ""),
+      url: t.url || ""
+    }))
+    .filter(t => {
+      if (!t.taskId || seen.has(t.taskId)) return false;
+      seen.add(t.taskId);
+      return true;
+    });
+}
+
+function prepareTasks(rawTasks) {
+  tasks = normaliseTasks(rawTasks)
+    .map(task => {
+      const due = parseDate(task.dueDate);
+      const duration = task.words / CONFIG.WORDS_PER_DAY;
+
+      return {
+        ...task,
+        due,
+        duration
+      };
+    })
+    .filter(task => task.due);
+
+  if (!tasks.length) {
+    throw new Error("No hay tareas con una fecha de vencimiento válida.");
+  }
+
+  // "Current day" as requested for the timeline.
+  const today = startOfDay(new Date());
+
+  const latestDue = tasks.reduce(
+    (max, task) => task.due > max ? task.due : max,
+    tasks[0].due
+  );
+
+  globalStart = today;
+  globalEnd = latestDue;
+
+  // If all tasks are already overdue, still make a useful timeline.
+  if (globalStart > globalEnd) {
+    globalStart = tasks.reduce(
+      (min, task) => task.due < min ? task.due : min,
+      tasks[0].due
+    );
+  }
+
+  tasks.sort((a, b) => {
+    const pa = normaliseAssignee(a.assigned);
+    const pb = normaliseAssignee(b.assigned);
+    return pa.localeCompare(pb, "es") || a.due - b.due || a.taskId.localeCompare(b.taskId);
+  });
+}
+
+/* ---------- Gantt calculations ---------- */
+
+/*
+ * Returns the start datetime of a task by walking backwards over
+ * business days. Duration is measured in business days.
+ *
+ * The due date itself is a full business day available to the task.
+ * The visual right edge is always the beginning of the following day.
+ */
+function isBusinessDay(date) {
   const d = date.getDay();
   return d !== 0 && d !== 6;
 }
 
-
+function addDays(date, days) {
+  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  result.setDate(result.getDate() + days);
+  return result;
+}
 
 /*
- * Convert a duration in working days into a calendar start date.
- * The due date is the final working day and weekends consume zero duration.
+ * Calculate the calendar start date for a task whose duration is measured
+ * in working days and whose due date is the final day.
  *
- * A fractional day is represented as a fraction of a single working-day
- * column. Therefore 0.18 days = 18% of one day, not 18% of 24 hours spread
- * across several calendar days.
+ * Examples:
+ *   1 working day, due Monday -> Monday
+ *   2 working days, due Monday -> Friday
+ *   3 working days, due Monday -> Thursday
  */
 function calculateTaskStart(dueDate, businessDays) {
   const duration = Math.max(0, Number(businessDays) || 0);
@@ -154,32 +418,12 @@ function calculateTaskStart(dueDate, businessDays) {
   let remaining = duration;
   let cursor = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
 
-  // Find the final working day (normally the due date).
-  while (!isBusinessDay(cursor)) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  // If the whole task fits in this working day, place it at the end of it.
-  if (remaining <= 1) {
-    const start = new Date(cursor);
-    start.setTime(start.getTime() + (1 - remaining) * 86400000);
-    return start;
-  }
-
-  remaining -= 1;
-
-  // Consume previous complete working days, skipping weekends.
   while (remaining > 1e-10) {
-    cursor.setDate(cursor.getDate() - 1);
-    while (!isBusinessDay(cursor)) cursor.setDate(cursor.getDate() - 1);
-
-    if (remaining <= 1) {
-      const start = new Date(cursor);
-      start.setTime(start.getTime() + (1 - remaining) * 86400000);
-      return start;
+    if (isBusinessDay(cursor)) {
+      if (remaining <= 1) return new Date(cursor);
+      remaining -= 1;
     }
-
-    remaining -= 1;
+    cursor.setDate(cursor.getDate() - 1);
   }
 
   return cursor;
@@ -196,9 +440,11 @@ function assignTaskGeometry(task) {
 
   task.start = calculateTaskStart(due, businessDays);
 
-  // Visual right edge is the boundary immediately after the due date.
+  // Exact right boundary: immediately after the due date.
+  // Therefore a task due on Monday ends between Monday and Tuesday.
   task.end = addDays(due, 1);
   task.businessDays = businessDays;
+
   return task;
 }
 
@@ -206,21 +452,23 @@ function createTaskBar(task, timelineStart, timelineDays) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  // The visual timeline is a normal calendar. Weekends remain visible.
-  // The task START is already calculated in working days; the width is the
-  // actual calendar span between start and the end-of-due-day boundary.
   const leftDays = (task.start - timelineStart) / 86400000;
-  const widthDays = (task.end - task.start) / 86400000;
+  const rightDays = (task.end - timelineStart) / 86400000;
+  const timelineWidth = timelineDays * CONFIG.DAY_WIDTH;
 
+  // Anchor both edges to absolute timeline coordinates. This avoids
+  // cumulative rounding/drift, especially for short tasks.
   bar.style.left = `${leftDays * CONFIG.DAY_WIDTH}px`;
-  bar.style.width = `${Math.max(1, widthDays * CONFIG.DAY_WIDTH)}px`;
-  bar.style.right = "auto";
+  bar.style.right = `${Math.max(0, timelineWidth - rightDays * CONFIG.DAY_WIDTH)}px`;
+  bar.style.width = "auto";
+
   bar.style.backgroundColor = colorForPerson(task.assigned);
   bar.innerHTML = `<span>${escapeHtml(task.name)}</span>`;
 
-  bar.addEventListener("mouseenter", event => showTooltip(event, task));
+  bar.addEventListener("mouseenter", (event) => showTooltip(event, task));
   bar.addEventListener("mousemove", moveTooltip);
   bar.addEventListener("mouseleave", hideTooltip);
+
   return bar;
 }
 
@@ -328,7 +576,7 @@ function renderGantt() {
     timeline.appendChild(createTimelineGrid(dates, rowHeight));
 
     personTasks.forEach((task, index) => {
-      const bar = createTaskBar(task, globalStart, dates.length);
+      const bar = createTaskBar(task, timelineWidth);
       bar.style.top = `${10 + index * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
 
       bar.addEventListener("mouseenter", event => {
@@ -448,25 +696,6 @@ function downloadCSV() {
 
 /* ---------- Main loading pipeline ---------- */
 
-function prepareTasks(rawTasks) {
-  tasks = (Array.isArray(rawTasks) ? rawTasks : [])
-    .map(t => {
-      const due = parseDate(t.dueDate || t.due || "");
-      const words = Number(t.words) || parseWords(t.words) || 0;
-      return {
-        taskId: String(t.taskId || t.id || "").trim(),
-        title: cleanText(t.title || t.name || ""),
-        name: cleanText(t.name || t.title || ""),
-        dueDate: due ? formatDate(due) : "",
-        words,
-        assigned: normaliseAssignee(t.assigned || t.person || ""),
-        url: t.url || "",
-        duration: words / CONFIG.WORDS_PER_DAY
-      };
-    })
-    .filter(t => t.taskId && t.dueDate);
-}
-
 function displayTasks(rawTasks, source = "HTML") {
   try {
     prepareTasks(rawTasks);
@@ -513,21 +742,17 @@ htmlFile.addEventListener("change", async event => {
   }
 });
 
-
 downloadCsvBtn.addEventListener("click", downloadCSV);
 
 /* ---------- Initialisation ---------- */
 
 // Priority 1: data passed by the extension.
-// This happens before any URL loading and therefore does not call GVA.
 (async function initialise() {
   const extensionTasks = await getTasksFromExtension();
-
   if (extensionTasks && extensionTasks.__error) {
     setStatus(extensionTasks.__error, "error");
     return;
   }
-
   if (Array.isArray(extensionTasks)) {
     displayTasks(extensionTasks, "extension");
   } else {
