@@ -236,7 +236,7 @@ function extractTaskFromCard(card) {
     name,
     dueDate,
     words: parseWords(wordsText),
-    assigned,
+    assigned: normaliseAssignee(assigned),
     url: issueLink
   };
 }
@@ -279,6 +279,32 @@ function getTasksFromExtension() {
 
 /* ---------- Normalisation ---------- */
 
+function normaliseAssignee(value) {
+  const text = cleanText(value);
+  if (!text) return "Sin asignar";
+
+  const key = text
+    .normalize("NFD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+  if (
+    key === "sin asignar" ||
+    key === "sin assignar" ||
+    key === "no asignada" ||
+    key === "no asignado" ||
+    key === "unassigned" ||
+    key === "none" ||
+    key === "-" ||
+    key === "—"
+  ) {
+    return "Sin asignar";
+  }
+
+  return text;
+}
+
 function normaliseTasks(rawTasks) {
   const seen = new Set();
 
@@ -289,7 +315,7 @@ function normaliseTasks(rawTasks) {
       name: cleanText(t.name || t.title || ""),
       dueDate: cleanText(t.dueDate || ""),
       words: Number(t.words) || parseWords(t.words),
-      assigned: cleanText(t.assigned || t.person || ""),
+      assigned: normaliseAssignee(t.assigned || t.person || ""),
       url: t.url || ""
     }))
     .filter(t => {
@@ -337,8 +363,8 @@ function prepareTasks(rawTasks) {
   }
 
   tasks.sort((a, b) => {
-    const pa = a.assigned || "Sin asignar";
-    const pb = b.assigned || "Sin asignar";
+    const pa = normaliseAssignee(a.assigned);
+    const pb = normaliseAssignee(b.assigned);
     return pa.localeCompare(pb, "es") || a.due - b.due || a.taskId.localeCompare(b.taskId);
   });
 }
@@ -352,193 +378,111 @@ function prepareTasks(rawTasks) {
  * The due date itself is a full business day available to the task.
  * The visual right edge is always the beginning of the following day.
  */
-function calculateTaskStart(due, duration) {
-  if (duration <= 0) return startOfDay(due);
+function isBusinessDay(date) {
+  const d = date.getDay();
+  return d !== 0 && d !== 6;
+}
 
+function addDays(date, days) {
+  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+/*
+ * Calculate the calendar start date for a task whose duration is measured
+ * in working days and whose due date is the final day.
+ *
+ * Examples:
+ *   1 working day, due Monday -> Monday
+ *   2 working days, due Monday -> Friday
+ *   3 working days, due Monday -> Thursday
+ */
+function calculateTaskStart(dueDate, businessDays) {
+  const duration = Math.max(0, Number(businessDays) || 0);
+  if (duration === 0) return new Date(dueDate);
+
+  // The due date is the final working day. Work backwards in fractional
+  // working days. A fraction is a fraction of ONE calendar working day,
+  // not a fraction of the 24-hour period between dates.
   let remaining = duration;
-  let cursor = startOfDay(due);
+  let cursor = new Date(
+    dueDate.getFullYear(),
+    dueDate.getMonth(),
+    dueDate.getDate()
+  );
 
+  // For the last (possibly fractional) working day, the task starts inside
+  // that day. We use a continuous visual day width, so 0.18 day is 18% of
+  // the day's column.
   while (!isBusinessDay(cursor)) {
-    cursor = addDays(cursor, -1);
+    cursor.setDate(cursor.getDate() - 1);
   }
 
-  // Consume the due day backwards. Fractional duration is represented
-  // inside the business-day cell.
+  if (remaining <= 1) {
+    const start = new Date(cursor);
+    start.setTime(start.getTime() + (1 - remaining) * 86400000);
+    return start;
+  }
+
   remaining -= 1;
 
-  if (remaining <= 0) {
-    return addDays(due, -(duration));
-  }
-
-  cursor = addDays(cursor, -1);
-
-  while (remaining > 0) {
-    if (isBusinessDay(cursor)) {
-      if (remaining <= 1) {
-        return addDays(cursor, -(1 - remaining));
-      }
-      remaining -= 1;
+  while (remaining > 1e-10) {
+    cursor.setDate(cursor.getDate() - 1);
+    while (!isBusinessDay(cursor)) {
+      cursor.setDate(cursor.getDate() - 1);
     }
-    cursor = addDays(cursor, -1);
+
+    if (remaining <= 1) {
+      const start = new Date(cursor);
+      start.setTime(start.getTime() + (1 - remaining) * 86400000);
+      return start;
+    }
+
+    remaining -= 1;
   }
 
-  return addDays(cursor, 1);
+  return cursor;
 }
 
 function assignTaskGeometry(task) {
-  task.start = calculateTaskStart(task.due, task.duration);
+  const due = parseDate(task.dueDate);
+  if (!due) return null;
 
-  // Critical semantic point:
-  // due date ends at the end of that calendar day.
-  // Therefore the bar's right boundary is the start of due+1.
-  task.end = addDays(task.due, 1);
-}
-
-/* ---------- Gantt rendering ---------- */
-
-function buildDateArray(start, end) {
-  const dates = [];
-  let d = startOfDay(start);
-
-  while (d <= end) {
-    dates.push(new Date(d));
-    d = addDays(d, 1);
-  }
-
-  return dates;
-}
-
-function createDayHeader(date) {
-  const el = document.createElement("div");
-  el.className = "day-header";
-
-  if (!isBusinessDay(date)) el.classList.add("weekend");
-  if (date.getDay() === 1) el.classList.add("monday");
-
-  el.textContent = date.getDate();
-  el.title = formatDate(date);
-
-  return el;
-}
-
-function createMonthCells(dates) {
-  const cells = [];
-  let currentMonth = null;
-  let currentCount = 0;
-
-  function flush() {
-    if (!currentMonth) return;
-    const cell = document.createElement("div");
-    cell.className = "month-cell";
-    cell.style.flexBasis = `${currentCount * CONFIG.DAY_WIDTH}px`;
-    cell.style.width = `${currentCount * CONFIG.DAY_WIDTH}px`;
-    cell.textContent = `${MONTH_NAMES[currentMonth.month]} ${currentMonth.year}`;
-    cells.push(cell);
-  }
-
-  for (const date of dates) {
-    const key = `${date.getFullYear()}-${date.getMonth()}`;
-
-    if (!currentMonth || currentMonth.key !== key) {
-      flush();
-      currentMonth = {
-        key,
-        month: date.getMonth(),
-        year: date.getFullYear()
-      };
-      currentCount = 1;
-    } else {
-      currentCount++;
-    }
-  }
-
-  flush();
-  return cells;
-}
-
-function createTimelineGrid(dates, height) {
-  const grid = document.createElement("div");
-  grid.className = "timeline-grid";
-  grid.style.height = `${height}px`;
-
-  dates.forEach(date => {
-    const col = document.createElement("div");
-    col.className = "day-column";
-    grid.appendChild(col);
-  });
-
-  dates.forEach((date, index) => {
-    if (!isBusinessDay(date)) {
-      const weekend = document.createElement("div");
-      weekend.className = "weekend-column";
-      weekend.style.left = `${index * CONFIG.DAY_WIDTH}px`;
-      weekend.style.width = `${CONFIG.DAY_WIDTH}px`;
-      grid.appendChild(weekend);
-    }
-
-    if (date.getDay() === 1) {
-      const line = document.createElement("div");
-      line.className = "monday-line";
-      line.style.left = `${index * CONFIG.DAY_WIDTH}px`;
-      grid.appendChild(line);
-    }
-  });
-
-  return grid;
-}
-
-const PERSON_COLORS = [
-  "#4f46e5", "#0891b2", "#059669", "#d97706",
-  "#dc2626", "#9333ea", "#db2777", "#2563eb",
-  "#65a30d", "#ea580c", "#0f766e", "#7c3aed",
-  "#be123c", "#0369a1", "#15803d", "#b45309"
-];
-
-function colorForPerson(person) {
-  const value = String(person || "Sense assignar");
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) {
-    hash = ((hash << 5) - hash) + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return PERSON_COLORS[Math.abs(hash) % PERSON_COLORS.length];
-}
-
-function createTaskBar(task, timelineWidth) {
-  const bar = document.createElement("div");
-  bar.className = "task-bar";
-  bar.style.backgroundColor = colorForPerson(task.assigned || task.person || "Sense assignar");
-
-  const startOffset = daysBetween(globalStart, task.start);
-  const endOffset = daysBetween(globalStart, task.end);
-
-  const leftPosition = Math.round(startOffset * CONFIG.DAY_WIDTH);
-
-  /*
-   * Anchor the RIGHT edge directly.
-   *
-   * This avoids cumulative/fractional rounding drift when several short
-   * tasks end on the same date and are placed on different vertical lines.
-   */
-  const rightPosition = Math.round(endOffset * CONFIG.DAY_WIDTH);
-
-  const width = Math.max(
-    4,
-    rightPosition - leftPosition
+  const businessDays = Math.max(
+    0,
+    (Number(task.words) || 0) / CONFIG.WORDS_PER_DAY
   );
 
-  bar.style.left = `${leftPosition}px`;
-  bar.style.width = `${width}px`;
+  task.start = calculateTaskStart(due, businessDays);
 
-  const idSpan = document.createElement("span");
-  idSpan.className = "task-id";
-  idSpan.textContent = `#${task.taskId}`;
+  // Right edge is exactly the boundary after the due date.
+  task.end = addDays(due, 1);
+  task.businessDays = businessDays;
 
-  const titleSpan = document.createElement("span");
-  titleSpan.textContent = task.name || task.title || "";
+  return task;
+}
 
-  bar.appendChild(idSpan);
-  bar.appendChild(titleSpan);
+function createTaskBar(task, timelineStart, timelineDays) {
+  const bar = document.createElement("div");
+  bar.className = "task-bar";
+
+  const leftDays = (task.start - timelineStart) / 86400000;
+  const rightDays = (task.end - timelineStart) / 86400000;
+  const timelineWidth = timelineDays * CONFIG.DAY_WIDTH;
+
+  // Anchor both edges to absolute timeline coordinates. This avoids
+  // cumulative rounding/drift, especially for short tasks.
+  bar.style.left = `${leftDays * CONFIG.DAY_WIDTH}px`;
+  bar.style.right = `${Math.max(0, timelineWidth - rightDays * CONFIG.DAY_WIDTH)}px`;
+  bar.style.width = "auto";
+
+  bar.style.backgroundColor = colorForPerson(task.assigned);
+  bar.innerHTML = `<span>${escapeHtml(task.name)}</span>`;
+
+  bar.addEventListener("mouseenter", (event) => showTooltip(event, task));
+  bar.addEventListener("mousemove", moveTooltip);
+  bar.addEventListener("mouseleave", hideTooltip);
 
   return bar;
 }
@@ -547,7 +491,7 @@ function buildTooltip(task) {
   return `
     <div><strong>Tarea:</strong> #${escapeHtml(task.taskId)}</div>
     <div><strong>Nombre:</strong> ${escapeHtml(task.name || task.title || "")}</div>
-    <div><strong>Persona:</strong> ${escapeHtml(task.assigned || "Sin asignar")}</div>
+    <div><strong>Persona:</strong> ${escapeHtml(normaliseAssignee(task.assigned))}</div>
     <div><strong>Palabras:</strong> ${formatNumber(task.words)}</div>
     <div><strong>Duración:</strong> ${formatDuration(task.duration)}</div>
     <div><strong>Vencimiento:</strong> ${escapeHtml(formatDate(task.due))}</div>
@@ -585,7 +529,7 @@ function renderGantt() {
   const groups = new Map();
 
   for (const task of tasks) {
-    const person = task.assigned || "Sin asignar";
+    const person = normaliseAssignee(task.assigned);
     if (!groups.has(person)) groups.set(person, []);
     groups.get(person).push(task);
   }
@@ -704,7 +648,7 @@ function positionTooltip(event) {
 /* ---------- Summary ---------- */
 
 function updateSummary() {
-  const people = new Set(tasks.map(t => t.assigned || "Sin asignar"));
+  const people = new Set(tasks.map(t => normaliseAssignee(t.assigned)));
   const words = tasks.reduce((sum, t) => sum + (Number(t.words) || 0), 0);
   const latest = tasks.reduce(
     (max, t) => !max || t.due > max ? t.due : max,
