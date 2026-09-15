@@ -1,8 +1,7 @@
 /* ============================================================
    GVA PLANNING
    - Reads local HTML files
-   - Optionally tries the URL supplied by the user
-   - Accepts task data from the Chrome/Edge extension via #data=
+      - Accepts task data from the Chrome/Edge extension via #data-gzip= or #data=
    - Gantt: 8000 words / business day
    - Due date is the END of that day: right edge = next calendar day
    ============================================================ */
