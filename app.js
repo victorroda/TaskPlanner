@@ -1,7 +1,6 @@
 /* ============================================================
    GVA PLANNING
    - Reads local HTML files
-   - Optionally tries the URL supplied by the user
    - Accepts task data from the Chrome/Edge extension via #data=
    - Gantt: 8000 words / business day
    - Due date is the END of that day: right edge = next calendar day
@@ -33,7 +32,6 @@ let globalStart = null;
 let globalEnd = null;
 
 const htmlFile = document.getElementById("htmlFile");
-
 const downloadCsvBtn = document.getElementById("downloadCsvBtn");
 const statusEl = document.getElementById("status");
 const ganttContainer = document.getElementById("ganttContainer");
@@ -108,39 +106,14 @@ function addDays(date, days) {
   return result;
 }
 
-// Visual coordinate measured in WORKING DAYS from the beginning of the timeline.
-// Weekends have zero width in the duration coordinate, while they remain visible
-// in the calendar. This prevents a short task from accidentally becoming 2–3 days.
-function workingCoordinate(date, timelineStart) {
-  const a = new Date(timelineStart.getFullYear(), timelineStart.getMonth(), timelineStart.getDate());
-  const b = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  if (b <= a) return 0;
-
-  let coord = 0;
-  const cur = new Date(a);
-  while (cur < b) {
-    if (isBusinessDay(cur)) coord += 1;
-    cur.setDate(cur.getDate() + 1);
-  }
-
-  // Fraction of the current working day.
-  if (b.getHours() || b.getMinutes() || b.getSeconds() || b.getMilliseconds()) {
-    if (isBusinessDay(b)) {
-      coord += (
-        b.getHours() * 3600000 +
-        b.getMinutes() * 60000 +
-        b.getSeconds() * 1000 +
-        b.getMilliseconds()
-      ) / 86400000;
-    }
-  }
-  return coord;
-}
-
-function businessDaysBetween(startDate, endDate) {
-  return workingCoordinate(endDate, startDate);
-}
-
+/*
+ * Convert a duration in working days into a calendar start date.
+ * The due date is the final working day and weekends consume zero duration.
+ *
+ * A fractional day is represented as a fraction of a single working-day
+ * column. Therefore 0.18 days = 18% of one day, not 18% of 24 hours spread
+ * across several calendar days.
+ */
 function calculateTaskStart(dueDate, businessDays) {
   const duration = Math.max(0, Number(businessDays) || 0);
   if (duration === 0) return new Date(dueDate);
@@ -148,11 +121,12 @@ function calculateTaskStart(dueDate, businessDays) {
   let remaining = duration;
   let cursor = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
 
+  // Find the final working day (normally the due date).
   while (!isBusinessDay(cursor)) {
     cursor.setDate(cursor.getDate() - 1);
   }
 
-  // A fractional final working day occupies only that fraction of its column.
+  // If the whole task fits in this working day, place it at the end of it.
   if (remaining <= 1) {
     const start = new Date(cursor);
     start.setTime(start.getTime() + (1 - remaining) * 86400000);
@@ -161,6 +135,7 @@ function calculateTaskStart(dueDate, businessDays) {
 
   remaining -= 1;
 
+  // Consume previous complete working days, skipping weekends.
   while (remaining > 1e-10) {
     cursor.setDate(cursor.getDate() - 1);
     while (!isBusinessDay(cursor)) cursor.setDate(cursor.getDate() - 1);
@@ -170,8 +145,10 @@ function calculateTaskStart(dueDate, businessDays) {
       start.setTime(start.getTime() + (1 - remaining) * 86400000);
       return start;
     }
+
     remaining -= 1;
   }
+
   return cursor;
 }
 
@@ -179,10 +156,14 @@ function assignTaskGeometry(task) {
   const due = parseDate(task.dueDate);
   if (!due) return null;
 
-  const businessDays = Math.max(0, (Number(task.words) || 0) / CONFIG.WORDS_PER_DAY);
+  const businessDays = Math.max(
+    0,
+    (Number(task.words) || 0) / CONFIG.WORDS_PER_DAY
+  );
+
   task.start = calculateTaskStart(due, businessDays);
 
-  // End boundary is immediately after the due date.
+  // Visual right edge is the boundary immediately after the due date.
   task.end = addDays(due, 1);
   task.businessDays = businessDays;
   return task;
@@ -192,13 +173,14 @@ function createTaskBar(task, timelineStart, timelineDays) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  // Use one coordinate system only: working-day coordinates.
-  // A 0.18-day task therefore has exactly 18% of one working-day column.
-  const left = workingCoordinate(task.start, timelineStart) * CONFIG.DAY_WIDTH;
-  const right = workingCoordinate(task.end, timelineStart) * CONFIG.DAY_WIDTH;
+  // The visual timeline is a normal calendar. Weekends remain visible.
+  // The task START is already calculated in working days; the width is the
+  // actual calendar span between start and the end-of-due-day boundary.
+  const leftDays = (task.start - timelineStart) / 86400000;
+  const widthDays = (task.end - task.start) / 86400000;
 
-  bar.style.left = `${left}px`;
-  bar.style.width = `${Math.max(1, right - left)}px`;
+  bar.style.left = `${leftDays * CONFIG.DAY_WIDTH}px`;
+  bar.style.width = `${Math.max(1, widthDays * CONFIG.DAY_WIDTH)}px`;
   bar.style.right = "auto";
   bar.style.backgroundColor = colorForPerson(task.assigned);
   bar.innerHTML = `<span>${escapeHtml(task.name)}</span>`;
@@ -313,7 +295,7 @@ function renderGantt() {
     timeline.appendChild(createTimelineGrid(dates, rowHeight));
 
     personTasks.forEach((task, index) => {
-      const bar = createTaskBar(task, timelineStart, timelineDays);
+      const bar = createTaskBar(task, globalStart, dates.length);
       bar.style.top = `${10 + index * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
 
       bar.addEventListener("mouseenter", event => {
@@ -479,6 +461,7 @@ htmlFile.addEventListener("change", async event => {
   }
 });
 
+loadUrlBtn.addEventListener("click", async () => {
   const url = urlInput.value.trim();
   if (!url) {
     setStatus("Introduce una URL.", "error");
