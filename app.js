@@ -594,6 +594,7 @@ function createTaskBar(task, timelineWidth) {
   // must never increase the rendered width beyond the calculated width.
   bar.style.boxSizing = "border-box";
   bar.style.minWidth = "0";
+  bar.style.maxWidth = `${width}px`;
   bar.style.left = `${rightPosition - width}px`;
   bar.style.width = `${width}px`;
 

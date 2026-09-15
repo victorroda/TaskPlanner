@@ -393,7 +393,7 @@ button:disabled {
   border-radius: 5px;
   background: #536dfe;
   color: white;
-  padding: 0 7px;
+  padding: 0;
   display: flex;
   align-items: center;
   overflow: hidden;
@@ -413,6 +413,7 @@ button:disabled {
 
 .task-id {
   font-weight: 700;
+  margin-left: 7px;
   margin-right: 5px;
 }
 
