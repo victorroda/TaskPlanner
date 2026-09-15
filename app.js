@@ -258,21 +258,49 @@ function extractTasksFromDocument(doc) {
 
 function getTasksFromExtension() {
   const hash = window.location.hash || "";
-  if (!hash.startsWith("#data=")) return null;
+  if (!hash.startsWith("#data=") && !hash.startsWith("#data-gzip=")) return null;
 
   try {
-    const encoded = decodeURIComponent(hash.slice("#data=".length));
+    const prefix = hash.startsWith("#data-gzip=") ? "#data-gzip=" : "#data=";
+    const encoded = decodeURIComponent(hash.slice(prefix.length));
     const binary = atob(encoded);
     const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
-    const json = new TextDecoder("utf-8").decode(bytes);
-    const parsed = JSON.parse(json);
 
-    if (!Array.isArray(parsed) || !parsed.length) return null;
+    if (prefix === "#data-gzip=") {
+      if (!("DecompressionStream" in window)) {
+        throw new Error("El navegador no admite DecompressionStream.");
+      }
+      return new Response(
+        new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))
+      ).json().then(parsed => {
+        if (!Array.isArray(parsed) || !parsed.length) {
+          throw new Error("El payload no contiene una lista de tareas.");
+        }
+        console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
+        return parsed;
+      });
+    }
+
+    // Compatible con la extensión anterior:
+    // btoa(unescape(encodeURIComponent(JSON.stringify(tasks))))
+    let json;
+    try {
+      json = new TextDecoder("utf-8").decode(bytes);
+      JSON.parse(json);
+    } catch (_) {
+      json = decodeURIComponent(escape(binary));
+    }
+
+    const parsed = JSON.parse(json);
+    if (!Array.isArray(parsed) || !parsed.length) {
+      throw new Error("El payload no contiene una lista de tareas.");
+    }
 
     console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
     return parsed;
   } catch (error) {
     console.error("[GVA Planning] Error leyendo datos de la extensión:", error);
+    setStatus("Error leyendo los datos de la extensión: " + error.message, "error");
     return null;
   }
 }
@@ -802,10 +830,10 @@ downloadCsvBtn.addEventListener("click", downloadCSV);
 
 // Priority 1: data passed by the extension.
 // This happens before any URL loading and therefore does not call GVA.
-const extensionTasks = getTasksFromExtension();
-
-if (extensionTasks) {
-  displayTasks(extensionTasks, "extension");
-} else {
-  setStatus("Esperando datos…");
-}
+Promise.resolve(getTasksFromExtension()).then(extensionTasks => {
+  if (Array.isArray(extensionTasks)) {
+    displayTasks(extensionTasks, "extension");
+  } else if (!window.location.hash) {
+    setStatus("Esperando datos…");
+  }
+});
