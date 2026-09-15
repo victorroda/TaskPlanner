@@ -448,6 +448,25 @@ function downloadCSV() {
 
 /* ---------- Main loading pipeline ---------- */
 
+function prepareTasks(rawTasks) {
+  tasks = (Array.isArray(rawTasks) ? rawTasks : [])
+    .map(t => {
+      const due = parseDate(t.dueDate || t.due || "");
+      const words = Number(t.words) || parseWords(t.words) || 0;
+      return {
+        taskId: String(t.taskId || t.id || "").trim(),
+        title: cleanText(t.title || t.name || ""),
+        name: cleanText(t.name || t.title || ""),
+        dueDate: due ? formatDate(due) : "",
+        words,
+        assigned: normaliseAssignee(t.assigned || t.person || ""),
+        url: t.url || "",
+        duration: words / CONFIG.WORDS_PER_DAY
+      };
+    })
+    .filter(t => t.taskId && t.dueDate);
+}
+
 function displayTasks(rawTasks, source = "HTML") {
   try {
     prepareTasks(rawTasks);
