@@ -33,8 +33,7 @@ let globalStart = null;
 let globalEnd = null;
 
 const htmlFile = document.getElementById("htmlFile");
-const urlInput = document.getElementById("urlInput");
-const loadUrlBtn = document.getElementById("loadUrlBtn");
+
 const downloadCsvBtn = document.getElementById("downloadCsvBtn");
 const statusEl = document.getElementById("status");
 const ganttContainer = document.getElementById("ganttContainer");
@@ -99,286 +98,6 @@ function addDays(date, days) {
 }
 
 function isBusinessDay(date) {
-  const day = date.getDay();
-  return day !== 0 && day !== 6;
-}
-
-function formatDate(date) {
-  if (!date) return "";
-  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
-}
-
-function formatMonth(date) {
-  return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
-}
-
-function dateKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
-}
-
-function daysBetween(a, b) {
-  const ms = startOfDay(b) - startOfDay(a);
-  return Math.round(ms / 86400000);
-}
-
-function parseWords(value) {
-  let text = cleanText(value).replace(/\u00a0/g, " ");
-  if (!text) return 0;
-
-  text = text.replace(/[^\d.,-]/g, "");
-
-  if (text.includes(",") && text.includes(".")) {
-    text = text.replace(/\./g, "").replace(",", ".");
-  } else if (text.includes(",")) {
-    text = text.replace(/,/g, "");
-  } else if (text.includes(".") && /^\d+\.\d{3}$/.test(text)) {
-    text = text.replace(".", "");
-  }
-
-  const n = Number(text);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/* ---------- Extraction from an HTML document ---------- */
-
-function getAttributeValue(card, labels) {
-  const wanted = labels.map(x => x.toLowerCase());
-
-  for (const b of card.querySelectorAll("b, strong, label")) {
-    const label = cleanText(b.textContent).toLowerCase().replace(/:$/, "");
-    if (!wanted.includes(label)) continue;
-
-    let node = b.nextSibling;
-
-    while (node) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const t = cleanText(node.textContent);
-        if (t) return t;
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const t = cleanText(node.textContent);
-        if (t) return t;
-      }
-      node = node.nextSibling;
-    }
-
-    const parent = b.parentElement;
-    if (parent) {
-      const clone = parent.cloneNode(true);
-      clone.querySelectorAll("b, strong, label").forEach(x => x.remove());
-      const t = cleanText(clone.textContent);
-      if (t) return t;
-    }
-  }
-
-  return "";
-}
-
-function extractIssueId(card) {
-  const dataId = card.getAttribute("data-id") || "";
-
-  const idEl = card.querySelector(".issue-id");
-  const idText = cleanText(idEl?.textContent);
-  const match = idText.match(/#(\d+)/);
-  if (match) return match[1];
-
-  const link = card.querySelector("a[href*='/issues/']");
-  const hrefMatch = (link?.getAttribute("href") || "").match(/\/issues\/(\d+)/);
-  if (hrefMatch) return hrefMatch[1];
-
-  if (/^\d+$/.test(dataId)) return dataId;
-
-  const cardMatch = cleanText(card.textContent).match(/#(\d+)/);
-  return cardMatch ? cardMatch[1] : "";
-}
-
-function extractTaskFromCard(card) {
-  const taskId = extractIssueId(card);
-
-  const name =
-    cleanText(card.querySelector("p.name a")?.textContent) ||
-    cleanText(card.querySelector("p.name")?.textContent);
-
-  const dueDate =
-    getAttributeValue(card, [
-      "Data real de venciment",
-      "Fecha real de vencimiento",
-      "Real due date",
-      "Due date"
-    ]);
-
-  const wordsText =
-    getAttributeValue(card, [
-      "Nombre de paraules Salt pro",
-      "Número de palabras Salt pro",
-      "Salt pro words",
-      "Words"
-    ]);
-
-  // The actual GVA HTML stores the assignee in:
-  // <p class="info assigned-user"><span class="user"><a>imes xx</a></span>
-  const assigned =
-    cleanText(card.querySelector(".assigned-user .user a")?.textContent) ||
-    getAttributeValue(card, [
-      "Persona assignada",
-      "Persona asignada",
-      "Assigned to",
-      "Assignee"
-    ]);
-
-  const issueLink =
-    card.querySelector("p.name a[href*='/issues/']")?.href ||
-    card.querySelector("a[href*='/issues/']")?.href ||
-    "";
-
-  return {
-    taskId,
-    title: name,
-    name,
-    dueDate,
-    words: parseWords(wordsText),
-    assigned: normaliseAssignee(assigned),
-    url: issueLink
-  };
-}
-
-function extractTasksFromDocument(doc) {
-  const cards = Array.from(doc.querySelectorAll(".issue-card[data-id]"));
-  const seen = new Set();
-  const result = [];
-
-  for (const card of cards) {
-    const task = extractTaskFromCard(card);
-    if (!task.taskId || seen.has(task.taskId)) continue;
-
-    seen.add(task.taskId);
-    result.push(task);
-  }
-
-  return result;
-}
-
-/* ---------- Extension input ---------- */
-
-function getTasksFromExtension() {
-  const hash = window.location.hash || "";
-  if (!hash.startsWith("#data=")) return null;
-
-  try {
-    const encoded = decodeURIComponent(hash.slice(6));
-    const json = decodeURIComponent(escape(atob(encoded)));
-    const parsed = JSON.parse(json);
-
-    if (!Array.isArray(parsed) || !parsed.length) return null;
-
-    return parsed;
-  } catch (error) {
-    console.error("Error leyendo datos de la extensión:", error);
-    return null;
-  }
-}
-
-/* ---------- Normalisation ---------- */
-
-function normaliseAssignee(value) {
-  const text = cleanText(value);
-  if (!text) return "Sin asignar";
-
-  const key = text
-    .normalize("NFD")
-    .replace(/[\\u0300-\\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-
-  if (
-    key === "sin asignar" ||
-    key === "sin assignar" ||
-    key === "no asignada" ||
-    key === "no asignado" ||
-    key === "unassigned" ||
-    key === "none" ||
-    key === "-" ||
-    key === "—"
-  ) {
-    return "Sin asignar";
-  }
-
-  return text;
-}
-
-function normaliseTasks(rawTasks) {
-  const seen = new Set();
-
-  return rawTasks
-    .map(t => ({
-      taskId: String(t.taskId || t.id || "").trim(),
-      title: cleanText(t.title || ""),
-      name: cleanText(t.name || t.title || ""),
-      dueDate: cleanText(t.dueDate || ""),
-      words: Number(t.words) || parseWords(t.words),
-      assigned: normaliseAssignee(t.assigned || t.person || ""),
-      url: t.url || ""
-    }))
-    .filter(t => {
-      if (!t.taskId || seen.has(t.taskId)) return false;
-      seen.add(t.taskId);
-      return true;
-    });
-}
-
-function prepareTasks(rawTasks) {
-  tasks = normaliseTasks(rawTasks)
-    .map(task => {
-      const due = parseDate(task.dueDate);
-      const duration = task.words / CONFIG.WORDS_PER_DAY;
-
-      return {
-        ...task,
-        due,
-        duration
-      };
-    })
-    .filter(task => task.due);
-
-  if (!tasks.length) {
-    throw new Error("No hay tareas con una fecha de vencimiento válida.");
-  }
-
-  // "Current day" as requested for the timeline.
-  const today = startOfDay(new Date());
-
-  const latestDue = tasks.reduce(
-    (max, task) => task.due > max ? task.due : max,
-    tasks[0].due
-  );
-
-  globalStart = today;
-  globalEnd = latestDue;
-
-  // If all tasks are already overdue, still make a useful timeline.
-  if (globalStart > globalEnd) {
-    globalStart = tasks.reduce(
-      (min, task) => task.due < min ? task.due : min,
-      tasks[0].due
-    );
-  }
-
-  tasks.sort((a, b) => {
-    const pa = normaliseAssignee(a.assigned);
-    const pb = normaliseAssignee(b.assigned);
-    return pa.localeCompare(pb, "es") || a.due - b.due || a.taskId.localeCompare(b.taskId);
-  });
-}
-
-/* ---------- Gantt calculations ---------- */
-
-/*
- * Returns the start datetime of a task by walking backwards over
- * business days. Duration is measured in business days.
- *
- * The due date itself is a full business day available to the task.
- * The visual right edge is always the beginning of the following day.
- */
-function isBusinessDay(date) {
   const d = date.getDay();
   return d !== 0 && d !== 6;
 }
@@ -389,36 +108,51 @@ function addDays(date, days) {
   return result;
 }
 
-/*
- * Calculate the calendar start date for a task whose duration is measured
- * in working days and whose due date is the final day.
- *
- * Examples:
- *   1 working day, due Monday -> Monday
- *   2 working days, due Monday -> Friday
- *   3 working days, due Monday -> Thursday
- */
+// Visual coordinate measured in WORKING DAYS from the beginning of the timeline.
+// Weekends have zero width in the duration coordinate, while they remain visible
+// in the calendar. This prevents a short task from accidentally becoming 2–3 days.
+function workingCoordinate(date, timelineStart) {
+  const a = new Date(timelineStart.getFullYear(), timelineStart.getMonth(), timelineStart.getDate());
+  const b = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (b <= a) return 0;
+
+  let coord = 0;
+  const cur = new Date(a);
+  while (cur < b) {
+    if (isBusinessDay(cur)) coord += 1;
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  // Fraction of the current working day.
+  if (b.getHours() || b.getMinutes() || b.getSeconds() || b.getMilliseconds()) {
+    if (isBusinessDay(b)) {
+      coord += (
+        b.getHours() * 3600000 +
+        b.getMinutes() * 60000 +
+        b.getSeconds() * 1000 +
+        b.getMilliseconds()
+      ) / 86400000;
+    }
+  }
+  return coord;
+}
+
+function businessDaysBetween(startDate, endDate) {
+  return workingCoordinate(endDate, startDate);
+}
+
 function calculateTaskStart(dueDate, businessDays) {
   const duration = Math.max(0, Number(businessDays) || 0);
   if (duration === 0) return new Date(dueDate);
 
-  // The due date is the final working day. Work backwards in fractional
-  // working days. A fraction is a fraction of ONE calendar working day,
-  // not a fraction of the 24-hour period between dates.
   let remaining = duration;
-  let cursor = new Date(
-    dueDate.getFullYear(),
-    dueDate.getMonth(),
-    dueDate.getDate()
-  );
+  let cursor = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
 
-  // For the last (possibly fractional) working day, the task starts inside
-  // that day. We use a continuous visual day width, so 0.18 day is 18% of
-  // the day's column.
   while (!isBusinessDay(cursor)) {
     cursor.setDate(cursor.getDate() - 1);
   }
 
+  // A fractional final working day occupies only that fraction of its column.
   if (remaining <= 1) {
     const start = new Date(cursor);
     start.setTime(start.getTime() + (1 - remaining) * 86400000);
@@ -429,19 +163,15 @@ function calculateTaskStart(dueDate, businessDays) {
 
   while (remaining > 1e-10) {
     cursor.setDate(cursor.getDate() - 1);
-    while (!isBusinessDay(cursor)) {
-      cursor.setDate(cursor.getDate() - 1);
-    }
+    while (!isBusinessDay(cursor)) cursor.setDate(cursor.getDate() - 1);
 
     if (remaining <= 1) {
       const start = new Date(cursor);
       start.setTime(start.getTime() + (1 - remaining) * 86400000);
       return start;
     }
-
     remaining -= 1;
   }
-
   return cursor;
 }
 
@@ -449,17 +179,12 @@ function assignTaskGeometry(task) {
   const due = parseDate(task.dueDate);
   if (!due) return null;
 
-  const businessDays = Math.max(
-    0,
-    (Number(task.words) || 0) / CONFIG.WORDS_PER_DAY
-  );
-
+  const businessDays = Math.max(0, (Number(task.words) || 0) / CONFIG.WORDS_PER_DAY);
   task.start = calculateTaskStart(due, businessDays);
 
-  // Right edge is exactly the boundary after the due date.
+  // End boundary is immediately after the due date.
   task.end = addDays(due, 1);
   task.businessDays = businessDays;
-
   return task;
 }
 
@@ -467,23 +192,20 @@ function createTaskBar(task, timelineStart, timelineDays) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  const leftDays = (task.start - timelineStart) / 86400000;
-  const rightDays = (task.end - timelineStart) / 86400000;
-  const timelineWidth = timelineDays * CONFIG.DAY_WIDTH;
+  // Use one coordinate system only: working-day coordinates.
+  // A 0.18-day task therefore has exactly 18% of one working-day column.
+  const left = workingCoordinate(task.start, timelineStart) * CONFIG.DAY_WIDTH;
+  const right = workingCoordinate(task.end, timelineStart) * CONFIG.DAY_WIDTH;
 
-  // Anchor both edges to absolute timeline coordinates. This avoids
-  // cumulative rounding/drift, especially for short tasks.
-  bar.style.left = `${leftDays * CONFIG.DAY_WIDTH}px`;
-  bar.style.right = `${Math.max(0, timelineWidth - rightDays * CONFIG.DAY_WIDTH)}px`;
-  bar.style.width = "auto";
-
+  bar.style.left = `${left}px`;
+  bar.style.width = `${Math.max(1, right - left)}px`;
+  bar.style.right = "auto";
   bar.style.backgroundColor = colorForPerson(task.assigned);
   bar.innerHTML = `<span>${escapeHtml(task.name)}</span>`;
 
-  bar.addEventListener("mouseenter", (event) => showTooltip(event, task));
+  bar.addEventListener("mouseenter", event => showTooltip(event, task));
   bar.addEventListener("mousemove", moveTooltip);
   bar.addEventListener("mouseleave", hideTooltip);
-
   return bar;
 }
 
@@ -591,7 +313,7 @@ function renderGantt() {
     timeline.appendChild(createTimelineGrid(dates, rowHeight));
 
     personTasks.forEach((task, index) => {
-      const bar = createTaskBar(task, globalStart, dates.length);
+      const bar = createTaskBar(task, timelineStart, timelineDays);
       bar.style.top = `${10 + index * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
 
       bar.addEventListener("mouseenter", event => {
@@ -757,7 +479,6 @@ htmlFile.addEventListener("change", async event => {
   }
 });
 
-loadUrlBtn.addEventListener("click", async () => {
   const url = urlInput.value.trim();
   if (!url) {
     setStatus("Introduce una URL.", "error");
