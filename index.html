@@ -1,67 +1,44 @@
-<!DOCTYPE html>
-<html lang="es">
+<!doctype html>
+<html lang="ca">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>GVA Planning</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260915-2">
 </head>
 <body>
-  <header class="app-header">
-    <div>
-      <h1>GVA Planning</h1>
-      <p>Planificación de tareas de traducción</p>
+<header class="app-header">
+  <div>
+    <h1>GVA Planning</h1>
+    <p>Planificació de tasques del GVA Agile Board</p>
+  </div>
+</header>
+
+<main>
+  <section class="controls">
+    <label class="file-control">
+      <span>Carregar HTML local</span>
+      <input id="fileInput" type="file" accept=".html,.htm,text/html">
+    </label>
+    <button id="extensionBtn" type="button">Esperar dades de l'extensió</button>
+    <button id="csvBtn" type="button" disabled>Descarregar CSV</button>
+  </section>
+
+  <div id="status" class="status">Esperant dades…</div>
+
+  <section id="summary" class="summary" hidden>
+    <div><strong id="taskCount">0</strong><span>tasques</span></div>
+    <div><strong id="peopleCount">0</strong><span>persones</span></div>
+    <div><strong id="wordCount">0</strong><span>paraules</span></div>
+  </section>
+
+  <section id="planner" class="planner" hidden>
+    <div class="gantt-scroll">
+      <div id="gantt"></div>
     </div>
-  </header>
+  </section>
+</main>
 
-  <main class="container">
-    <section class="input-panel">
-      <div class="input-card">
-        <h2>1. Cargar datos</h2>
-
-        <label class="file-label" for="htmlFile">Seleccionar archivo HTML</label>
-        <input type="file" id="htmlFile" accept=".html,.htm,text/html">
-
-<div id="extensionInfo" class="extension-info hidden">
-          <strong>Datos recibidos desde la extensión</strong>
-          <span>La información procede únicamente del DOM ya cargado en la pestaña de GVA.</span>
-        </div>
-
-        <div id="status" class="status">Esperando datos…</div>
-      </div>
-
-      <div class="summary-card">
-        <h2>Resumen</h2>
-        <div class="summary-grid">
-          <div><span>Tareas</span><strong id="taskCount">—</strong></div>
-          <div><span>Personas</span><strong id="personCount">—</strong></div>
-          <div><span>Palabras</span><strong id="wordCount">—</strong></div>
-          <div><span>Último vencimiento</span><strong id="lastDueDate">—</strong></div>
-        </div>
-        <button id="downloadCsvBtn" class="secondary-btn" type="button" disabled>
-          Descargar CSV
-        </button>
-      </div>
-    </section>
-
-    <section class="gantt-section">
-      <div class="section-heading">
-        <div>
-          <h2>Planificación</h2>
-          <p>8.000 palabras = 1 día laborable · sábados y domingos no computan</p>
-        </div>
-      </div>
-
-      <div id="ganttContainer" class="gantt-container">
-        <div class="empty-state">
-          Carga las tareas para mostrar la planificación.
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <div id="tooltip" class="tooltip hidden"></div>
-
-  <script src="app.js"></script>
+<script src="app.js?v=20260915-2"></script>
 </body>
 </html>
