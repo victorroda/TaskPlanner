@@ -256,47 +256,23 @@ function extractTasksFromDocument(doc) {
 
 /* ---------- Extension input ---------- */
 
-async function getTasksFromExtension() {
+function getTasksFromExtension() {
   const hash = window.location.hash || "";
-  if (!hash.startsWith("#data-gzip=") && !hash.startsWith("#data=")) return null;
+  if (!hash.startsWith("#data=")) return null;
 
   try {
-    const gzip = hash.startsWith("#data-gzip=");
-    const prefix = gzip ? "#data-gzip=" : "#data=";
-    const encoded = decodeURIComponent(hash.slice(prefix.length));
-
+    const encoded = decodeURIComponent(hash.slice("#data=".length));
     const binary = atob(encoded);
     const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
-
-    let json;
-
-    if (gzip) {
-      if (!("DecompressionStream" in window)) {
-        throw new Error("DecompressionStream no está disponible en este navegador.");
-      }
-
-      const stream = new Blob([bytes]).stream().pipeThrough(
-        new DecompressionStream("gzip")
-      );
-
-      json = await new Response(stream).text();
-    } else {
-      // Plain UTF-8 Base64 used by the non-gzip fallback.
-      json = new TextDecoder("utf-8").decode(bytes);
-    }
-
+    const json = new TextDecoder("utf-8").decode(bytes);
     const parsed = JSON.parse(json);
 
-    if (!Array.isArray(parsed) || !parsed.length) {
-      throw new Error("El payload decodificado no contiene una lista de tareas.");
-    }
+    if (!Array.isArray(parsed) || !parsed.length) return null;
 
     console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
     return parsed;
-
   } catch (error) {
     console.error("[GVA Planning] Error leyendo datos de la extensión:", error);
-    setStatus("Error leyendo los datos de la extensión: " + error.message, "error");
     return null;
   }
 }
@@ -382,33 +358,23 @@ function calculateTaskStart(due, duration) {
   let remaining = duration;
   let cursor = startOfDay(due);
 
-  while (!isBusinessDay(cursor)) {
-    cursor = addDays(cursor, -1);
-  }
-
-  // Consume the due day backwards. Fractional duration is represented
-  // inside the business-day cell.
-  remaining -= 1;
-
-  if (remaining <= 0) {
-    return addDays(due, -(duration));
-  }
-
-  cursor = addDays(cursor, -1);
-
-  while (remaining > 0) {
-    if (isBusinessDay(cursor)) {
-      if (remaining <= 1) {
-        return addDays(cursor, -(1 - remaining));
-      }
-      remaining -= 1;
+  // A task uses working time only. The due date is the right-hand
+  // calendar-day boundary; weekends contribute zero working time.
+  while (true) {
+    while (!isBusinessDay(cursor)) {
+      cursor = addDays(cursor, -1);
     }
+
+    if (remaining <= 1) {
+      // Start inside this business-day cell. For example, 0.88 days
+      // remaining means starting 0.12 into the day.
+      return new Date(cursor.getTime() + (1 - remaining) * 86400000);
+    }
+
+    remaining -= 1;
     cursor = addDays(cursor, -1);
   }
-
-  return addDays(cursor, 1);
 }
-
 function assignTaskGeometry(task) {
   task.start = calculateTaskStart(task.due, task.duration);
 
@@ -511,30 +477,46 @@ function createTimelineGrid(dates, height) {
   return grid;
 }
 
+const PERSON_COLORS = [
+  "#536dfe", "#26a69a", "#ab47bc", "#ef5350", "#ffa726",
+  "#42a5f5", "#66bb6a", "#ec407a", "#7e57c2", "#29b6f6",
+  "#8d6e63", "#5c6bc0", "#26c6da", "#9ccc65", "#ff7043"
+];
+
+function getPersonColor(person) {
+  const name = cleanText(person);
+  if (!name || name === "Sin asignar") return "#9e9e9e";
+
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+  }
+
+  return PERSON_COLORS[Math.abs(hash) % PERSON_COLORS.length];
+}
+
 function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  const startOffset = daysBetween(globalStart, task.start);
-  const endOffset = daysBetween(globalStart, task.end);
+  // Calendar position is used for the horizontal axis. Only the START
+  // contains a fractional part; the RIGHT edge is exactly the day after
+  // the due date, so a due date of 12 ends between 12 and 13.
+  const startCalendarDays =
+    (task.start - startOfDay(globalStart)) / 86400000;
+  const endCalendarDays =
+    (task.end - startOfDay(globalStart)) / 86400000;
 
-  const leftPosition = Math.round(startOffset * CONFIG.DAY_WIDTH);
+  const leftPosition = Math.round(startCalendarDays * CONFIG.DAY_WIDTH);
+  const rightPosition = Math.round(endCalendarDays * CONFIG.DAY_WIDTH);
 
-  /*
-   * Anchor the RIGHT edge directly.
-   *
-   * This avoids cumulative/fractional rounding drift when several short
-   * tasks end on the same date and are placed on different vertical lines.
-   */
-  const rightPosition = Math.round(endOffset * CONFIG.DAY_WIDTH);
-
-  const width = Math.max(
-    4,
-    rightPosition - leftPosition
-  );
+  const width = Math.max(4, rightPosition - leftPosition);
 
   bar.style.left = `${leftPosition}px`;
   bar.style.width = `${width}px`;
+
+  // Stable colour per assigned person. Unassigned tasks are grey.
+  bar.style.background = getPersonColor(task.assigned || "Sin asignar");
 
   const idSpan = document.createElement("span");
   idSpan.className = "task-id";
@@ -548,7 +530,6 @@ function createTaskBar(task, timelineWidth) {
 
   return bar;
 }
-
 function buildTooltip(task) {
   return `
     <div><strong>Tarea:</strong> #${escapeHtml(task.taskId)}</div>
@@ -826,10 +807,10 @@ downloadCsvBtn.addEventListener("click", downloadCSV);
 
 // Priority 1: data passed by the extension.
 // This happens before any URL loading and therefore does not call GVA.
-getTasksFromExtension().then(extensionTasks => {
-  if (Array.isArray(extensionTasks)) {
-    displayTasks(extensionTasks, "extension");
-  } else if (!window.location.hash) {
-    setStatus("Esperando datos…");
-  }
-});
+const extensionTasks = getTasksFromExtension();
+
+if (extensionTasks) {
+  displayTasks(extensionTasks, "extension");
+} else {
+  setStatus("Esperando datos…");
+}
