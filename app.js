@@ -37,24 +37,40 @@ const statusEl = document.getElementById("status");
 const ganttContainer = document.getElementById("ganttContainer");
 const tooltip = document.getElementById("tooltip");
 
-function getTasksFromExtension() {
+async function getTasksFromExtension() {
+  const hash = window.location.hash || "";
+
   try {
-    const hash = window.location.hash || "";
-    if (!hash.startsWith("#data=")) return null;
+    if (hash.startsWith("#data-gzip=")) {
+      const encoded = decodeURIComponent(hash.slice("#data-gzip=".length));
+      const binary = atob(encoded);
+      const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
 
-    const encoded = decodeURIComponent(hash.slice(6));
-    if (!encoded) return null;
+      if (!("DecompressionStream" in window)) {
+        throw new Error("Este navegador no soporta la descompresión de datos.");
+      }
 
-    // The extension uses UTF-8-safe base64:
-    // btoa(unescape(encodeURIComponent(JSON.stringify(tasks))))
-    const json = decodeURIComponent(escape(atob(encoded)));
-    const parsed = JSON.parse(json);
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
 
-    return Array.isArray(parsed) ? parsed : null;
+      const json = await new Response(ds.readable).text();
+      const parsed = JSON.parse(json);
+      return Array.isArray(parsed) ? parsed : null;
+    }
+
+    if (hash.startsWith("#data=")) {
+      const encoded = decodeURIComponent(hash.slice("#data=".length));
+      const json = decodeURIComponent(escape(atob(encoded)));
+      const parsed = JSON.parse(json);
+      return Array.isArray(parsed) ? parsed : null;
+    }
+
+    return null;
   } catch (error) {
     console.error("No se pudieron leer los datos de la extensión:", error);
-    setStatus("Error leyendo los datos enviados por la extensión.", "error");
-    return null;
+    return { __error: "Error leyendo los datos enviados por la extensión." };
   }
 }
 
@@ -485,10 +501,17 @@ downloadCsvBtn.addEventListener("click", downloadCSV);
 
 // Priority 1: data passed by the extension.
 // This happens before any URL loading and therefore does not call GVA.
-const extensionTasks = getTasksFromExtension();
+(async function initialise() {
+  const extensionTasks = await getTasksFromExtension();
 
-if (extensionTasks) {
-  displayTasks(extensionTasks, "extension");
-} else {
-  setStatus("Esperando datos…");
-}
+  if (extensionTasks && extensionTasks.__error) {
+    setStatus(extensionTasks.__error, "error");
+    return;
+  }
+
+  if (Array.isArray(extensionTasks)) {
+    displayTasks(extensionTasks, "extension");
+  } else {
+    setStatus("Esperando datos…");
+  }
+})();
