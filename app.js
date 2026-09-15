@@ -567,23 +567,27 @@ function calendarPixelPosition(date) {
   return ((date - startOfDay(globalStart)) / 86400000) * CONFIG.DAY_WIDTH;
 }
 
+function calendarPixelPosition(date) {
+  return ((date - startOfDay(globalStart)) / 86400000) * CONFIG.DAY_WIDTH;
+}
+
 function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  // RIGHT EDGE: determined exclusively by the due date.
-  // A due date of the 12th ends exactly at the boundary between
-  // the 12th and the 13th.
+  // Every task with the same due date has exactly the same right edge.
   const rightPosition = calendarPixelPosition(addDays(task.due, 1));
 
-  // LEFT EDGE: duration measured backwards in working days from the
-  // common due-date boundary. Thus tasks with the same due date always
-  // share exactly the same right edge.
-  const leftDate = calculateTaskStart(task.due, task.duration);
-  const leftPosition = calendarPixelPosition(leftDate);
+  // Duration is measured backwards in working days; weekends do not count.
+  const leftPosition = calendarPixelPosition(
+    calculateTaskStart(task.due, task.duration)
+  );
 
-  bar.style.left = `${leftPosition}px`;
-  bar.style.width = `${Math.max(2, rightPosition - leftPosition)}px`;
+  const width = Math.max(1, rightPosition - leftPosition);
+
+  // Keep the right edge exact even for very short tasks.
+  bar.style.left = `${rightPosition - width}px`;
+  bar.style.width = `${width}px`;
 
   bar.style.background = getPersonColor(task.assigned || "Sin asignar");
 
