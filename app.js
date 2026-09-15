@@ -355,36 +355,42 @@ function prepareTasks(rawTasks) {
 function calculateTaskStart(due, duration) {
   if (duration <= 0) return startOfDay(due);
 
+  // The right boundary of a task is the end of its due date
+  // (i.e. 00:00 of the following calendar day).
   let remaining = duration;
   let cursor = startOfDay(due);
 
-  // A task uses working time only. The due date is the right-hand
-  // calendar-day boundary; weekends contribute zero working time.
-  while (true) {
+  while (remaining > 0) {
+    // Skip weekends completely.
     while (!isBusinessDay(cursor)) {
       cursor = addDays(cursor, -1);
     }
 
     if (remaining <= 1) {
-      // Start inside this business-day cell. For example, 0.88 days
-      // remaining means starting 0.12 into the day.
+      // Fractional part of the final working day.
       return new Date(cursor.getTime() + (1 - remaining) * 86400000);
     }
 
     remaining -= 1;
     cursor = addDays(cursor, -1);
   }
+
+  return startOfDay(due);
 }
+
 function assignTaskGeometry(task) {
   task.start = calculateTaskStart(task.due, task.duration);
 
-  // Critical semantic point:
-  // due date ends at the end of that calendar day.
-  // Therefore the bar's right boundary is the start of due+1.
+  // IMPORTANT: the end is not always due + 1 visually. The task must
+  // occupy exactly its business-day duration. Its right boundary is
+  // still the end of the due date, while weekends between start and end
+  // simply contain no working time.
   task.end = addDays(task.due, 1);
 }
 
 /* ---------- Gantt rendering ---------- */
+
+
 
 function buildDateArray(start, end) {
   const dates = [];
@@ -495,27 +501,46 @@ function getPersonColor(person) {
   return PERSON_COLORS[Math.abs(hash) % PERSON_COLORS.length];
 }
 
+function businessTimeCoordinate(date) {
+  // Horizontal coordinate measured in working-day units from globalStart.
+  // Weekends have zero width in this coordinate, while the calendar itself
+  // still displays them.
+  let d = startOfDay(globalStart);
+  let units = 0;
+
+  while (d < date) {
+    if (isBusinessDay(d)) {
+      const next = addDays(d, 1);
+      const fraction = Math.max(
+        0,
+        Math.min(1, (Math.min(date, next) - d) / 86400000)
+      );
+      units += fraction;
+    }
+    d = addDays(d, 1);
+  }
+
+  return units;
+}
+
+function calendarPixelPosition(date) {
+  // Keep the visible calendar grid unchanged. Convert the working-time
+  // interval to calendar coordinates, inserting weekend space.
+  return (date - startOfDay(globalStart)) / 86400000 * CONFIG.DAY_WIDTH;
+}
+
 function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  // Calendar position is used for the horizontal axis. Only the START
-  // contains a fractional part; the RIGHT edge is exactly the day after
-  // the due date, so a due date of 12 ends between 12 and 13.
-  const startCalendarDays =
-    (task.start - startOfDay(globalStart)) / 86400000;
-  const endCalendarDays =
-    (task.end - startOfDay(globalStart)) / 86400000;
-
-  const leftPosition = Math.round(startCalendarDays * CONFIG.DAY_WIDTH);
-  const rightPosition = Math.round(endCalendarDays * CONFIG.DAY_WIDTH);
-
-  const width = Math.max(4, rightPosition - leftPosition);
+  // Exact calendar positions. Crucially, width is based on the task's
+  // working-time duration, not on a rounded minimum calendar span.
+  const leftPosition = calendarPixelPosition(task.start);
+  const rightPosition = calendarPixelPosition(task.end);
 
   bar.style.left = `${leftPosition}px`;
-  bar.style.width = `${width}px`;
+  bar.style.width = `${Math.max(2, rightPosition - leftPosition)}px`;
 
-  // Stable colour per assigned person. Unassigned tasks are grey.
   bar.style.background = getPersonColor(task.assigned || "Sin asignar");
 
   const idSpan = document.createElement("span");
