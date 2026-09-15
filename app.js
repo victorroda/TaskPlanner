@@ -571,21 +571,29 @@ function calendarPixelPosition(date) {
   return ((date - startOfDay(globalStart)) / 86400000) * CONFIG.DAY_WIDTH;
 }
 
+function calendarPixelPosition(date) {
+  return ((date - startOfDay(globalStart)) / 86400000) * CONFIG.DAY_WIDTH;
+}
+
 function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
 
-  // Every task with the same due date has exactly the same right edge.
+  // The right edge is determined ONLY by the due-date boundary.
   const rightPosition = calendarPixelPosition(addDays(task.due, 1));
 
-  // Duration is measured backwards in working days; weekends do not count.
+  // Duration is calculated backwards in working days.
   const leftPosition = calendarPixelPosition(
     calculateTaskStart(task.due, task.duration)
   );
 
   const width = Math.max(1, rightPosition - leftPosition);
 
-  // Keep the right edge exact even for very short tasks.
+  // Inline box model removes any dependency on cached/overridden CSS.
+  // This is especially important for very short tasks: their padding/text
+  // must never increase the rendered width beyond the calculated width.
+  bar.style.boxSizing = "border-box";
+  bar.style.minWidth = "0";
   bar.style.left = `${rightPosition - width}px`;
   bar.style.width = `${width}px`;
 

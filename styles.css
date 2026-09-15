@@ -387,6 +387,7 @@ button:disabled {
 
 .task-bar {
   box-sizing: border-box;
+  min-width: 0;
   position: absolute;
   height: 32px;
   border-radius: 5px;
