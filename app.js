@@ -256,7 +256,7 @@ function extractTasksFromDocument(doc) {
 
 /* ---------- Extension input ---------- */
 
-function getTasksFromExtension() {
+async function getTasksFromExtension() {
   const hash = window.location.hash || "";
   if (!hash.startsWith("#data=") && !hash.startsWith("#data-gzip=")) return null;
 
@@ -266,36 +266,31 @@ function getTasksFromExtension() {
     const binary = atob(encoded);
     const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
 
-    if (prefix === "#data-gzip=") {
+    // The working extension may label a gzip payload as #data-gzip=.
+    // Also detect gzip by its magic bytes, so older variants are accepted.
+    const isGzip = prefix === "#data-gzip=" || (bytes[0] === 0x1f && bytes[1] === 0x8b);
+
+    if (isGzip) {
       if (!("DecompressionStream" in window)) {
         throw new Error("El navegador no admite DecompressionStream.");
       }
-      return new Response(
+      const text = await new Response(
         new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))
-      ).json().then(parsed => {
-        if (!Array.isArray(parsed) || !parsed.length) {
-          throw new Error("El payload no contiene una lista de tareas.");
-        }
-        console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
-        return parsed;
-      });
+      ).text();
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed) || !parsed.length) {
+        throw new Error("El payload descomprimido no contiene una lista de tareas.");
+      }
+      console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
+      return parsed;
     }
 
-    // Compatible con la extensión anterior:
-    // btoa(unescape(encodeURIComponent(JSON.stringify(tasks))))
-    let json;
-    try {
-      json = new TextDecoder("utf-8").decode(bytes);
-      JSON.parse(json);
-    } catch (_) {
-      json = decodeURIComponent(escape(binary));
-    }
-
+    // Plain UTF-8 JSON payload used by older extension versions.
+    const json = new TextDecoder("utf-8").decode(bytes);
     const parsed = JSON.parse(json);
     if (!Array.isArray(parsed) || !parsed.length) {
       throw new Error("El payload no contiene una lista de tareas.");
     }
-
     console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
     return parsed;
   } catch (error) {
