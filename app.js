@@ -1,433 +1,811 @@
-(() => {
-"use strict";
+/* ============================================================
+   GVA PLANNING
+   - Reads local HTML files
+   - Accepts task data from the Chrome/Edge extension via #data=
+   - Gantt: 8000 words / business day
+   - Due date is the END of that day: right edge = next calendar day
+   ============================================================ */
 
 const CONFIG = {
+  CSV_FILENAME: "tasques_GVA.csv",
   WORDS_PER_DAY: 8000,
-  DAY_WIDTH: 72
+  DAY_WIDTH: 32,
+  PERSON_WIDTH: 170,
+  ROW_BASE_HEIGHT: 80,
+  TASK_HEIGHT: 32,
+  TASK_VERTICAL_GAP: 8
 };
 
-let tasks = [];
-let timelineDates = [];
-let timelineStart = null;
-let timelineEnd = null;
+const MONTHS = {
+  gen: 0, feb: 1, mar: 2, abr: 3, mai: 4, jun: 5, jul: 6, ago: 7,
+  set: 8, oct: 9, nov: 10, des: 11,
+  ene: 0, dic: 11, jan: 0, apr: 3, may: 4, aug: 7, sep: 8, dec: 11
+};
 
-const $ = id => document.getElementById(id);
+const MONTH_NAMES = [
+  "ene", "feb", "mar", "abr", "may", "jun",
+  "jul", "ago", "set", "oct", "nov", "des"
+];
+
+let tasks = [];
+let globalStart = null;
+let globalEnd = null;
+
+const htmlFile = document.getElementById("htmlFile");
+const downloadCsvBtn = document.getElementById("downloadCsvBtn");
+const statusEl = document.getElementById("status");
+const ganttContainer = document.getElementById("ganttContainer");
+const tooltip = document.getElementById("tooltip");
+
+function setStatus(text, type = "") {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (type ? " " + type : "");
+}
 
 function cleanText(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function normaliseAssignee(value) {
-  const s = cleanText(value);
-  return s || "Sense assignar";
-}
-
-function parseWords(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  const digits = String(value ?? "").replace(/[^\d]/g, "");
-  return digits ? Number(digits) : 0;
+  return (value || "").replace(/\s+/g, " ").trim();
 }
 
 function parseDate(value) {
-  const s = cleanText(value);
-  if (!s) return null;
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
-    const [d,m,y] = s.split("/").map(Number);
-    const dt = new Date(y,m-1,d);
-    return Number.isNaN(dt.getTime()) ? null : dt;
+  if (!value) return null;
+
+  const text = cleanText(value)
+    .replace(/\./g, "")
+    .replace(/,/g, "");
+
+  // dd/mm/yyyy
+  let m = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+    return isValidDate(d) ? startOfDay(d) : null;
   }
-  const months = {
-    gen:0,feb:1,mar:2,abr:3,mai:4,jun:5,jul:6,ago:7,set:8,sep:8,oct:9,nov:10,des:11,dec:11,
-    january:0,february:1,march:2,april:3,may:4,june:5,july:6,august:7,september:8,october:9,november:10,december:11,
-    enero:0,febrero:1,marzo:2,abril:3,mayo:4,junio:5,julio:6,agosto:7,septiembre:8,octubre:9,noviembre:10,diciembre:11
-  };
-  const m = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
-    .match(/^(\d{1,2})\s+([a-z]+)\s+(\d{4})$/);
-  if (m && months[m[2]] !== undefined) {
-    const dt = new Date(Number(m[3]), months[m[2]], Number(m[1]));
-    return Number.isNaN(dt.getTime()) ? null : dt;
+
+  // "16 Nov 2026"
+  m = text.match(/^(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\s+(\d{4})$/);
+  if (m) {
+    const month = MONTHS[m[2].slice(0, 3).toLowerCase()];
+    if (month !== undefined) {
+      const d = new Date(Number(m[3]), month, Number(m[1]));
+      return isValidDate(d) ? startOfDay(d) : null;
+    }
   }
-  const dt = new Date(s);
-  return Number.isNaN(dt.getTime()) ? null : dt;
+
+  // "2026-11-16"
+  m = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return isValidDate(d) ? startOfDay(d) : null;
+  }
+
+  const d = new Date(text);
+  return isValidDate(d) ? startOfDay(d) : null;
+}
+
+function isValidDate(d) {
+  return d instanceof Date && !Number.isNaN(d.getTime());
+}
+
+function startOfDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return startOfDay(d);
+}
+
+function isBusinessDay(date) {
+  const day = date.getDay();
+  return day !== 0 && day !== 6;
 }
 
 function formatDate(date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
-  return String(date.getDate()).padStart(2,"0") + "/" +
-         String(date.getMonth()+1).padStart(2,"0") + "/" +
-         date.getFullYear();
+  if (!date) return "";
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 }
 
-function addDays(date, n) {
-  const d = new Date(date);
-  d.setDate(d.getDate()+n);
-  return d;
+function formatMonth(date) {
+  return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-function isWeekend(date) {
-  const day = date.getDay();
-  return day === 0 || day === 6;
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
 }
 
-function calculateTaskStart(dueDate, businessDays) {
-  const due = new Date(dueDate);
-  const duration = Math.max(0, Number(businessDays) || 0);
-  if (duration <= 0) return due;
+function daysBetween(a, b) {
+  const ms = startOfDay(b) - startOfDay(a);
+  return Math.round(ms / 86400000);
+}
 
-  // A due date is the last working day occupied by the task.
-  // For a fractional one-day task, place its start fractionally within that day.
-  if (duration <= 1) {
-    return new Date(due.getTime() - duration * 86400000);
+function parseWords(value) {
+  let text = cleanText(value).replace(/\u00a0/g, " ");
+  if (!text) return 0;
+
+  text = text.replace(/[^\d.,-]/g, "");
+
+  if (text.includes(",") && text.includes(".")) {
+    text = text.replace(/\./g, "").replace(",", ".");
+  } else if (text.includes(",")) {
+    text = text.replace(/,/g, "");
+  } else if (text.includes(".") && /^\d+\.\d{3}$/.test(text)) {
+    text = text.replace(".", "");
   }
 
-  let remaining = duration;
-  let cursor = new Date(due);
-
-  if (isWeekend(cursor)) {
-    while (isWeekend(cursor)) cursor.setDate(cursor.getDate()-1);
-  }
-
-  const whole = Math.floor(remaining);
-  const fraction = remaining - whole;
-
-  // Consume the due working day plus previous working days.
-  let consumed = 0;
-  while (consumed < whole - 1e-9) {
-    cursor.setDate(cursor.getDate()-1);
-    if (!isWeekend(cursor)) consumed += 1;
-  }
-
-  if (fraction > 1e-9) {
-    cursor.setTime(cursor.getTime() - fraction * 86400000);
-  }
-  return cursor;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : 0;
 }
 
-function prepareTasks(rawTasks) {
-  return (Array.isArray(rawTasks) ? rawTasks : [])
-    .map(t => {
-      const due = parseDate(t.dueDate || t.due || "");
-      const words = parseWords(t.words);
-      return {
-        taskId: cleanText(t.taskId || t.id || ""),
-        title: cleanText(t.title || t.name || ""),
-        name: cleanText(t.name || t.title || ""),
-        dueDateObj: due,
-        dueDate: due ? formatDate(due) : "",
-        words,
-        assigned: normaliseAssignee(t.assigned || t.person || ""),
-        url: cleanText(t.url || ""),
-        duration: words / CONFIG.WORDS_PER_DAY
-      };
-    })
-    .filter(t => t.taskId && t.dueDateObj);
+/* ---------- Extraction from an HTML document ---------- */
+
+function getAttributeValue(card, labels) {
+  const wanted = labels.map(x => x.toLowerCase());
+
+  for (const b of card.querySelectorAll("b, strong, label")) {
+    const label = cleanText(b.textContent).toLowerCase().replace(/:$/, "");
+    if (!wanted.includes(label)) continue;
+
+    let node = b.nextSibling;
+
+    while (node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const t = cleanText(node.textContent);
+        if (t) return t;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const t = cleanText(node.textContent);
+        if (t) return t;
+      }
+      node = node.nextSibling;
+    }
+
+    const parent = b.parentElement;
+    if (parent) {
+      const clone = parent.cloneNode(true);
+      clone.querySelectorAll("b, strong, label").forEach(x => x.remove());
+      const t = cleanText(clone.textContent);
+      if (t) return t;
+    }
+  }
+
+  return "";
 }
 
-function buildDateArray(start, end) {
+function extractIssueId(card) {
+  const dataId = card.getAttribute("data-id") || "";
+
+  const idEl = card.querySelector(".issue-id");
+  const idText = cleanText(idEl?.textContent);
+  const match = idText.match(/#(\d+)/);
+  if (match) return match[1];
+
+  const link = card.querySelector("a[href*='/issues/']");
+  const hrefMatch = (link?.getAttribute("href") || "").match(/\/issues\/(\d+)/);
+  if (hrefMatch) return hrefMatch[1];
+
+  if (/^\d+$/.test(dataId)) return dataId;
+
+  const cardMatch = cleanText(card.textContent).match(/#(\d+)/);
+  return cardMatch ? cardMatch[1] : "";
+}
+
+function extractTaskFromCard(card) {
+  const taskId = extractIssueId(card);
+
+  const name =
+    cleanText(card.querySelector("p.name a")?.textContent) ||
+    cleanText(card.querySelector("p.name")?.textContent);
+
+  const dueDate =
+    getAttributeValue(card, [
+      "Data real de venciment",
+      "Fecha real de vencimiento",
+      "Real due date",
+      "Due date"
+    ]);
+
+  const wordsText =
+    getAttributeValue(card, [
+      "Nombre de paraules Salt pro",
+      "Número de palabras Salt pro",
+      "Salt pro words",
+      "Words"
+    ]);
+
+  // The actual GVA HTML stores the assignee in:
+  // <p class="info assigned-user"><span class="user"><a>imes xx</a></span>
+  const assigned =
+    cleanText(card.querySelector(".assigned-user .user a")?.textContent) ||
+    getAttributeValue(card, [
+      "Persona assignada",
+      "Persona asignada",
+      "Assigned to",
+      "Assignee"
+    ]);
+
+  const issueLink =
+    card.querySelector("p.name a[href*='/issues/']")?.href ||
+    card.querySelector("a[href*='/issues/']")?.href ||
+    "";
+
+  return {
+    taskId,
+    title: name,
+    name,
+    dueDate,
+    words: parseWords(wordsText),
+    assigned,
+    url: issueLink
+  };
+}
+
+function extractTasksFromDocument(doc) {
+  const cards = Array.from(doc.querySelectorAll(".issue-card[data-id]"));
+  const seen = new Set();
   const result = [];
-  const cursor = new Date(start);
-  cursor.setHours(0,0,0,0);
-  const finalDate = new Date(end);
-  finalDate.setHours(0,0,0,0);
-  while (cursor <= finalDate) {
-    result.push(new Date(cursor));
-    cursor.setDate(cursor.getDate()+1);
+
+  for (const card of cards) {
+    const task = extractTaskFromCard(card);
+    if (!task.taskId || seen.has(task.taskId)) continue;
+
+    seen.add(task.taskId);
+    result.push(task);
   }
+
   return result;
 }
 
-function monthName(date) {
-  return date.toLocaleDateString("ca-ES",{month:"long",year:"numeric"});
+/* ---------- Extension input ---------- */
+
+function getTasksFromExtension() {
+  const hash = window.location.hash || "";
+  if (!hash.startsWith("#data=")) return null;
+
+  try {
+    const encoded = decodeURIComponent(hash.slice("#data=".length));
+    const binary = atob(encoded);
+    const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+    const json = new TextDecoder("utf-8").decode(bytes);
+    const parsed = JSON.parse(json);
+
+    if (!Array.isArray(parsed) || !parsed.length) return null;
+
+    console.log("[GVA Planning] Datos de extensión recibidos:", parsed.length);
+    return parsed;
+  } catch (error) {
+    console.error("[GVA Planning] Error leyendo datos de la extensión:", error);
+    return null;
+  }
+}
+
+/* ---------- Normalisation ---------- */
+
+function normaliseTasks(rawTasks) {
+  const seen = new Set();
+
+  return rawTasks
+    .map(t => ({
+      taskId: String(t.taskId || t.id || "").trim(),
+      title: cleanText(t.title || ""),
+      name: cleanText(t.name || t.title || ""),
+      dueDate: cleanText(t.dueDate || ""),
+      words: Number(t.words) || parseWords(t.words),
+      assigned: cleanText(t.assigned || t.person || ""),
+      url: t.url || ""
+    }))
+    .filter(t => {
+      if (!t.taskId || seen.has(t.taskId)) return false;
+      seen.add(t.taskId);
+      return true;
+    });
+}
+
+function prepareTasks(rawTasks) {
+  tasks = normaliseTasks(rawTasks)
+    .map(task => {
+      const due = parseDate(task.dueDate);
+      const duration = task.words / CONFIG.WORDS_PER_DAY;
+
+      return {
+        ...task,
+        due,
+        duration
+      };
+    })
+    .filter(task => task.due);
+
+  if (!tasks.length) {
+    throw new Error("No hay tareas con una fecha de vencimiento válida.");
+  }
+
+  // "Current day" as requested for the timeline.
+  const today = startOfDay(new Date());
+
+  const latestDue = tasks.reduce(
+    (max, task) => task.due > max ? task.due : max,
+    tasks[0].due
+  );
+
+  globalStart = today;
+  globalEnd = latestDue;
+
+  // If all tasks are already overdue, still make a useful timeline.
+  if (globalStart > globalEnd) {
+    globalStart = tasks.reduce(
+      (min, task) => task.due < min ? task.due : min,
+      tasks[0].due
+    );
+  }
+
+  tasks.sort((a, b) => {
+    const pa = a.assigned || "Sin asignar";
+    const pb = b.assigned || "Sin asignar";
+    return pa.localeCompare(pb, "es") || a.due - b.due || a.taskId.localeCompare(b.taskId);
+  });
+}
+
+/* ---------- Gantt calculations ---------- */
+
+/*
+ * Returns the start datetime of a task by walking backwards over
+ * business days. Duration is measured in business days.
+ *
+ * The due date itself is a full business day available to the task.
+ * The visual right edge is always the beginning of the following day.
+ */
+function calculateTaskStart(due, duration) {
+  if (duration <= 0) return startOfDay(due);
+
+  let remaining = duration;
+  let cursor = startOfDay(due);
+
+  while (!isBusinessDay(cursor)) {
+    cursor = addDays(cursor, -1);
+  }
+
+  // Consume the due day backwards. Fractional duration is represented
+  // inside the business-day cell.
+  remaining -= 1;
+
+  if (remaining <= 0) {
+    return addDays(due, -(duration));
+  }
+
+  cursor = addDays(cursor, -1);
+
+  while (remaining > 0) {
+    if (isBusinessDay(cursor)) {
+      if (remaining <= 1) {
+        return addDays(cursor, -(1 - remaining));
+      }
+      remaining -= 1;
+    }
+    cursor = addDays(cursor, -1);
+  }
+
+  return addDays(cursor, 1);
+}
+
+function assignTaskGeometry(task) {
+  task.start = calculateTaskStart(task.due, task.duration);
+
+  // Critical semantic point:
+  // due date ends at the end of that calendar day.
+  // Therefore the bar's right boundary is the start of due+1.
+  task.end = addDays(task.due, 1);
+}
+
+/* ---------- Gantt rendering ---------- */
+
+function buildDateArray(start, end) {
+  const dates = [];
+  let d = startOfDay(start);
+
+  while (d <= end) {
+    dates.push(new Date(d));
+    d = addDays(d, 1);
+  }
+
+  return dates;
+}
+
+function createDayHeader(date) {
+  const el = document.createElement("div");
+  el.className = "day-header";
+
+  if (!isBusinessDay(date)) el.classList.add("weekend");
+  if (date.getDay() === 1) el.classList.add("monday");
+
+  el.textContent = date.getDate();
+  el.title = formatDate(date);
+
+  return el;
 }
 
 function createMonthCells(dates) {
   const cells = [];
-  if (!dates.length) return cells;
-  let start = 0;
-  while (start < dates.length) {
-    const key = dates[start].getFullYear()+"-"+dates[start].getMonth();
-    let end = start;
-    while (end+1 < dates.length &&
-           dates[end+1].getFullYear()+"-"+dates[end+1].getMonth() === key) end++;
-    cells.push({start,end,label:monthName(dates[start])});
-    start = end+1;
+  let currentMonth = null;
+  let currentCount = 0;
+
+  function flush() {
+    if (!currentMonth) return;
+    const cell = document.createElement("div");
+    cell.className = "month-cell";
+    cell.style.flexBasis = `${currentCount * CONFIG.DAY_WIDTH}px`;
+    cell.style.width = `${currentCount * CONFIG.DAY_WIDTH}px`;
+    cell.textContent = `${MONTH_NAMES[currentMonth.month]} ${currentMonth.year}`;
+    cells.push(cell);
   }
+
+  for (const date of dates) {
+    const key = `${date.getFullYear()}-${date.getMonth()}`;
+
+    if (!currentMonth || currentMonth.key !== key) {
+      flush();
+      currentMonth = {
+        key,
+        month: date.getMonth(),
+        year: date.getFullYear()
+      };
+      currentCount = 1;
+    } else {
+      currentCount++;
+    }
+  }
+
+  flush();
   return cells;
 }
 
-function createDayHeader(dates) {
-  const el = document.createElement("div");
-  el.className = "timeline-header";
-  el.style.width = (dates.length * CONFIG.DAY_WIDTH) + "px";
-  dates.forEach((d,i) => {
-    const day = document.createElement("div");
-    day.className = "day" + (isWeekend(d) ? " weekend" : "");
-    day.style.left = (i*CONFIG.DAY_WIDTH)+"px";
-    day.style.width = CONFIG.DAY_WIDTH+"px";
-    day.textContent = d.getDate();
-    el.appendChild(day);
-  });
-  createMonthCells(dates).forEach(m => {
-    const month = document.createElement("div");
-    month.className = "month";
-    month.style.left = (m.start*CONFIG.DAY_WIDTH)+"px";
-    month.style.width = ((m.end-m.start+1)*CONFIG.DAY_WIDTH)+"px";
-    month.textContent = m.label;
-    el.appendChild(month);
-  });
-  return el;
-}
+function createTimelineGrid(dates, height) {
+  const grid = document.createElement("div");
+  grid.className = "timeline-grid";
+  grid.style.height = `${height}px`;
 
-function createTimelineGrid(dates) {
-  const el = document.createElement("div");
-  el.className = "timeline-cell";
-  el.style.width = (dates.length * CONFIG.DAY_WIDTH) + "px";
-  el.style.setProperty("--dayw", CONFIG.DAY_WIDTH+"px");
-  dates.forEach((d,i) => {
-    if (isWeekend(d)) {
-      const bg = document.createElement("div");
-      bg.className = "weekend-bg";
-      bg.style.left = (i*CONFIG.DAY_WIDTH)+"px";
-      bg.style.width = CONFIG.DAY_WIDTH+"px";
-      el.appendChild(bg);
+  dates.forEach(date => {
+    const col = document.createElement("div");
+    col.className = "day-column";
+    grid.appendChild(col);
+  });
+
+  dates.forEach((date, index) => {
+    if (!isBusinessDay(date)) {
+      const weekend = document.createElement("div");
+      weekend.className = "weekend-column";
+      weekend.style.left = `${index * CONFIG.DAY_WIDTH}px`;
+      weekend.style.width = `${CONFIG.DAY_WIDTH}px`;
+      grid.appendChild(weekend);
+    }
+
+    if (date.getDay() === 1) {
+      const line = document.createElement("div");
+      line.className = "monday-line";
+      line.style.left = `${index * CONFIG.DAY_WIDTH}px`;
+      grid.appendChild(line);
     }
   });
-  return el;
+
+  return grid;
 }
 
-function colorForPerson(person) {
-  if (person === "Sense assignar") return "#777";
-  let hash = 0;
-  for (let i=0;i<person.length;i++) hash = ((hash<<5)-hash)+person.charCodeAt(i)|0;
-  const hue = Math.abs(hash)%360;
-  return `hsl(${hue} 55% 42%)`;
-}
-
-function createTaskBar(task) {
+function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
-  const leftDays = (task.start.getTime()-timelineStart.getTime())/86400000;
-  const widthDays = (task.end.getTime()-task.start.getTime())/86400000;
-  bar.style.left = Math.max(0,leftDays*CONFIG.DAY_WIDTH)+"px";
-  bar.style.width = Math.max(3,widthDays*CONFIG.DAY_WIDTH)+"px";
-  bar.style.background = colorForPerson(task.assigned);
-  bar.title =
-    "Tasca: " + task.taskId +
-    "\nNom: " + task.name +
-    "\nPersona: " + task.assigned +
-    "\nParaules: " + task.words.toLocaleString("ca-ES") +
-    "\nDuració: " + task.duration.toFixed(2) + " dies laborables" +
-    "\nVenciment: " + task.dueDate;
-  bar.textContent = task.taskId + " · " + task.name;
+
+  const startOffset = daysBetween(globalStart, task.start);
+  const endOffset = daysBetween(globalStart, task.end);
+
+  const leftPosition = Math.round(startOffset * CONFIG.DAY_WIDTH);
+
+  /*
+   * Anchor the RIGHT edge directly.
+   *
+   * This avoids cumulative/fractional rounding drift when several short
+   * tasks end on the same date and are placed on different vertical lines.
+   */
+  const rightPosition = Math.round(endOffset * CONFIG.DAY_WIDTH);
+
+  const width = Math.max(
+    4,
+    rightPosition - leftPosition
+  );
+
+  bar.style.left = `${leftPosition}px`;
+  bar.style.width = `${width}px`;
+
+  const idSpan = document.createElement("span");
+  idSpan.className = "task-id";
+  idSpan.textContent = `#${task.taskId}`;
+
+  const titleSpan = document.createElement("span");
+  titleSpan.textContent = task.name || task.title || "";
+
+  bar.appendChild(idSpan);
+  bar.appendChild(titleSpan);
+
   return bar;
 }
 
-function assignTaskGeometry() {
-  tasks.forEach(t => {
-    t.start = calculateTaskStart(t.dueDateObj, t.duration);
-    // End boundary is the beginning of the day after the due date.
-    t.end = addDays(t.dueDateObj,1);
-  });
+function buildTooltip(task) {
+  return `
+    <div><strong>Tarea:</strong> #${escapeHtml(task.taskId)}</div>
+    <div><strong>Nombre:</strong> ${escapeHtml(task.name || task.title || "")}</div>
+    <div><strong>Persona:</strong> ${escapeHtml(task.assigned || "Sin asignar")}</div>
+    <div><strong>Palabras:</strong> ${formatNumber(task.words)}</div>
+    <div><strong>Duración:</strong> ${formatDuration(task.duration)}</div>
+    <div><strong>Vencimiento:</strong> ${escapeHtml(formatDate(task.due))}</div>
+  `;
+}
+
+function formatNumber(n) {
+  return Number(n || 0).toLocaleString("es-ES");
+}
+
+function formatDuration(days) {
+  if (!Number.isFinite(days)) return "—";
+  if (days < 0.01) return "< 0,01 días";
+  return `${days.toLocaleString("es-ES", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  })} días laborables`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function renderGantt() {
-  const container = $("gantt");
-  container.innerHTML = "";
-  if (!tasks.length) return;
+  tasks.forEach(assignTaskGeometry);
 
-  const today = new Date();
-  today.setHours(0,0,0,0);
-  const lastDue = new Date(Math.max(...tasks.map(t=>t.dueDateObj.getTime())));
-  lastDue.setHours(0,0,0,0);
+  const dates = buildDateArray(globalStart, globalEnd);
+  const timelineWidth = dates.length * CONFIG.DAY_WIDTH;
 
-  timelineStart = today;
-  timelineEnd = addDays(lastDue,1);
-  timelineDates = buildDateArray(timelineStart,timelineEnd);
+  const groups = new Map();
 
-  assignTaskGeometry();
+  for (const task of tasks) {
+    const person = task.assigned || "Sin asignar";
+    if (!groups.has(person)) groups.set(person, []);
+    groups.get(person).push(task);
+  }
 
-  const people = [...new Set(tasks.map(t=>t.assigned))].sort((a,b) =>
-    a.localeCompare(b,"ca",{sensitivity:"base"}));
+  const inner = document.createElement("div");
+  inner.className = "gantt-inner";
+  inner.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
 
+  const scroll = document.createElement("div");
+  scroll.className = "gantt-scroll";
+
+  // Day header
   const header = document.createElement("div");
   header.className = "gantt-header";
-  const ph = document.createElement("div");
-  ph.className = "person-header";
-  ph.textContent = "Persona";
-  header.appendChild(ph);
-  header.appendChild(createDayHeader(timelineDates));
-  container.appendChild(header);
+  header.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
 
-  people.forEach(person => {
+  const personHeader = document.createElement("div");
+  personHeader.className = "person-header";
+  personHeader.textContent = "Persona";
+  header.appendChild(personHeader);
+
+  dates.forEach(date => header.appendChild(createDayHeader(date)));
+
+  // Month row
+  const monthRow = document.createElement("div");
+  monthRow.className = "month-row";
+  monthRow.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
+
+  const monthSpacer = document.createElement("div");
+  monthSpacer.className = "month-spacer";
+  monthRow.appendChild(monthSpacer);
+
+  createMonthCells(dates).forEach(cell => monthRow.appendChild(cell));
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "gantt-body";
+  body.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
+
+  for (const [person, personTasks] of groups) {
+    const rowHeight = Math.max(
+      CONFIG.ROW_BASE_HEIGHT,
+      20 + personTasks.length * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)
+    );
+
     const row = document.createElement("div");
-    row.className = "gantt-row";
+    row.className = "person-row";
+    row.style.height = `${rowHeight}px`;
 
-    const pc = document.createElement("div");
-    pc.className = "person-cell";
-    pc.textContent = person;
-    row.appendChild(pc);
+    const name = document.createElement("div");
+    name.className = "person-name";
+    name.textContent = person;
 
-    const timeline = createTimelineGrid(timelineDates);
-    tasks.filter(t=>t.assigned===person).forEach(t => timeline.appendChild(createTaskBar(t)));
-    row.appendChild(timeline);
+    const timeline = document.createElement("div");
+    timeline.className = "timeline-row";
+    timeline.style.width = `${timelineWidth}px`;
+    timeline.style.height = `${rowHeight}px`;
 
-    container.appendChild(row);
-  });
-}
+    timeline.appendChild(createTimelineGrid(dates, rowHeight));
 
-function updateSummary() {
-  $("taskCount").textContent = tasks.length;
-  $("peopleCount").textContent = new Set(tasks.map(t=>t.assigned)).size;
-  $("wordCount").textContent = tasks.reduce((s,t)=>s+t.words,0).toLocaleString("ca-ES");
-  $("summary").hidden = false;
-}
+    personTasks.forEach((task, index) => {
+      const bar = createTaskBar(task, timelineWidth);
+      bar.style.top = `${10 + index * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
 
-function setStatus(text, type="") {
-  const el = $("status");
-  el.textContent = text;
-  el.className = "status" + (type ? " "+type : "");
-}
+      bar.addEventListener("mouseenter", event => {
+        tooltip.innerHTML = buildTooltip(task);
+        tooltip.classList.remove("hidden");
+        positionTooltip(event);
+      });
 
-function displayTasks(rawTasks, source) {
-  try {
-    const prepared = prepareTasks(rawTasks);
-    if (!prepared.length) throw new Error("No s'han pogut preparar les tasques rebudes.");
-    tasks = prepared;
-    updateSummary();
-    renderGantt();
-    $("planner").hidden = false;
-    $("csvBtn").disabled = false;
-    setStatus(`${tasks.length} tasques carregades (${source}).`,"ok");
-  } catch (e) {
-    console.error(e);
-    setStatus("Error preparant les tasques: " + e.message,"error");
-  }
-}
+      bar.addEventListener("mousemove", positionTooltip);
+      bar.addEventListener("mouseleave", () => tooltip.classList.add("hidden"));
 
-function decodeBase64Utf8(encoded) {
-  const binary = atob(encoded);
-  const bytes = Uint8Array.from(binary,c=>c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-async function getTasksFromExtension() {
-  const hash = window.location.hash || "";
-  console.log("[GVA Planning] hash:", hash ? hash.slice(0,80)+"…" : "(empty)");
-
-  try {
-    if (hash.startsWith("#data-gzip=")) {
-      console.log("[GVA Planning] gzip payload detected");
-      const encoded = decodeURIComponent(hash.slice("#data-gzip=".length));
-      const binary = atob(encoded);
-      const bytes = Uint8Array.from(binary,c=>c.charCodeAt(0));
-      console.log("[GVA Planning] gzip bytes:", bytes.length);
-
-      if (!("DecompressionStream" in window)) {
-        throw new Error("DecompressionStream no està disponible.");
+      if (task.url) {
+        bar.addEventListener("dblclick", () => {
+          window.open(task.url, "_blank", "noopener,noreferrer");
+        });
       }
 
-      const ds = new DecompressionStream("gzip");
-      const decompressed = await new Response(
-        new Blob([bytes]).stream().pipeThrough(ds)
-      ).text();
+      timeline.appendChild(bar);
+    });
 
-      console.log("[GVA Planning] decompressed chars:", decompressed.length);
-      const parsed = JSON.parse(decompressed);
-      console.log("[GVA Planning] JSON tasks:", Array.isArray(parsed) ? parsed.length : "not array");
-      return Array.isArray(parsed) ? parsed : null;
+    row.appendChild(name);
+    row.appendChild(timeline);
+    body.appendChild(row);
+  }
+
+  inner.appendChild(header);
+  inner.appendChild(monthRow);
+  inner.appendChild(body);
+  scroll.appendChild(inner);
+
+  ganttContainer.innerHTML = "";
+  ganttContainer.appendChild(scroll);
+}
+
+function positionTooltip(event) {
+  const margin = 14;
+  let x = event.clientX + margin;
+  let y = event.clientY + margin;
+
+  const rect = tooltip.getBoundingClientRect();
+
+  if (x + rect.width > window.innerWidth - margin) {
+    x = event.clientX - rect.width - margin;
+  }
+
+  if (y + rect.height > window.innerHeight - margin) {
+    y = event.clientY - rect.height - margin;
+  }
+
+  tooltip.style.left = `${Math.max(margin, x)}px`;
+  tooltip.style.top = `${Math.max(margin, y)}px`;
+}
+
+/* ---------- Summary ---------- */
+
+function updateSummary() {
+  const people = new Set(tasks.map(t => t.assigned || "Sin asignar"));
+  const words = tasks.reduce((sum, t) => sum + (Number(t.words) || 0), 0);
+  const latest = tasks.reduce(
+    (max, t) => !max || t.due > max ? t.due : max,
+    null
+  );
+
+  document.getElementById("taskCount").textContent = tasks.length;
+  document.getElementById("personCount").textContent = people.size;
+  document.getElementById("wordCount").textContent = formatNumber(words);
+  document.getElementById("lastDueDate").textContent = formatDate(latest);
+
+  downloadCsvBtn.disabled = false;
+}
+
+/* ---------- CSV ---------- */
+
+function csvEscape(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+function makeCSV() {
+  const headers = [
+    "Tasca",
+    "Nom",
+    "Data real de venciment",
+    "Nombre de paraules Salt pro",
+    "Persona assignada"
+  ];
+
+  const lines = [
+    headers.map(csvEscape).join(";"),
+    ...tasks.map(task => [
+      task.taskId,
+      task.name || task.title || "",
+      formatDate(task.due),
+      task.words || "",
+      task.assigned || ""
+    ].map(csvEscape).join(";"))
+  ];
+
+  return "\ufeff" + lines.join("\r\n");
+}
+
+function downloadCSV() {
+  const blob = new Blob([makeCSV()], {
+    type: "text/csv;charset=utf-8"
+  });
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = CONFIG.CSV_FILENAME;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------- Main loading pipeline ---------- */
+
+function displayTasks(rawTasks, source = "HTML") {
+  try {
+    prepareTasks(rawTasks);
+    updateSummary();
+    renderGantt();
+
+    if (source === "extension") {
+      document.getElementById("extensionInfo").classList.remove("hidden");
+      setStatus(
+        `✓ ${tasks.length} tareas recibidas desde la extensión. Lectura 100 % local.`,
+        "success"
+      );
+    } else {
+      document.getElementById("extensionInfo").classList.add("hidden");
+      setStatus(`✓ ${tasks.length} tareas cargadas correctamente.`, "success");
     }
-
-    if (hash.startsWith("#data=")) {
-      console.log("[GVA Planning] plain payload detected");
-      const encoded = decodeURIComponent(hash.slice("#data=".length));
-      const json = decodeBase64Utf8(encoded);
-      const parsed = JSON.parse(json);
-      console.log("[GVA Planning] JSON tasks:", Array.isArray(parsed) ? parsed.length : "not array");
-      return Array.isArray(parsed) ? parsed : null;
-    }
-
-    console.log("[GVA Planning] no data payload in hash");
-    return null;
   } catch (error) {
-    console.error("[GVA Planning] transfer error:", error);
-    setStatus("Error llegint les dades de l'extensió: " + error.message,"error");
-    return null;
+    console.error(error);
+    setStatus("Error: " + error.message, "error");
   }
 }
 
-function extractTasksFromHtml(html) {
-  const doc = new DOMParser().parseFromString(html,"text/html");
-  const cards = [...doc.querySelectorAll(".issue-card[data-id]")];
-  const result = [];
+htmlFile.addEventListener("change", async event => {
+  const file = event.target.files?.[0];
+  if (!file) return;
 
-  cards.forEach(card => {
-    const id = cleanText(card.getAttribute("data-id"));
-    if (!id || result.some(t=>t.taskId===id)) return;
+  setStatus("Leyendo archivo HTML local…");
 
-    const text = cleanText(card.textContent);
-    const nameEl =
-      card.querySelector(".subject a") ||
-      card.querySelector(".issue-subject a") ||
-      card.querySelector(".issue-card-subject a");
-    const name = cleanText(nameEl?.textContent || text.replace(/^.*?#\d+\s*/,""));
+  try {
+    const html = await file.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
 
-    let due = "";
-    const dueEl = [...card.querySelectorAll("*")].find(el =>
-      /due|venc|data.*venc|fecha/i.test(cleanText(el.textContent)) &&
-      /\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4}/.test(cleanText(el.textContent))
-    );
-    if (dueEl) {
-      const m = cleanText(dueEl.textContent).match(/(\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4})/);
-      if (m) due = m[1];
+    const extracted = extractTasksFromDocument(doc);
+
+    if (!extracted.length) {
+      throw new Error("No se encontraron tarjetas .issue-card[data-id] en el archivo.");
     }
 
-    const wordsMatch = text.match(/(?:words?|paraules?|palabras?)\s*:?\s*([\d.,]+)/i);
-    const words = wordsMatch ? parseWords(wordsMatch[1]) : 0;
-
-    const userEl = card.querySelector(".assigned-user .user a");
-    const assigned = cleanText(userEl?.textContent || "");
-
-    result.push({taskId:id,name,title:name,dueDate:due,words,assigned});
-  });
-
-  return result;
-}
-
-function downloadCsv() {
-  const header = ["Task ID","Name","Data real de venciment","Nombre de paraules Salt pro","Persona assignada"];
-  const rows = tasks.map(t => [
-    t.taskId,t.name,t.dueDate,String(t.words),t.assigned
-  ]);
-  const csv = [header,...rows].map(row =>
-    row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(";")
-  ).join("\r\n");
-  const blob = new Blob(["\ufeff",csv],{type:"text/csv;charset=utf-8"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "GVA_Planning.csv";
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
-}
-
-$("fileInput").addEventListener("change", async e => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  try {
-    setStatus("Llegint HTML local…");
-    displayTasks(extractTasksFromHtml(await file.text()),"HTML local");
-  } catch (err) {
-    setStatus("Error llegint l'HTML: "+err.message,"error");
+    displayTasks(extracted, "HTML");
+  } catch (error) {
+    console.error(error);
+    setStatus("Error: " + error.message, "error");
   }
 });
 
-$("csvBtn").addEventListener("click",downloadCsv);
 
-(async function initialise() {
-  const extensionTasks = await getTasksFromExtension();
-  if (Array.isArray(extensionTasks)) {
-    displayTasks(extensionTasks,"extensió");
-  } else if (!window.location.hash) {
-    setStatus("Esperant dades…");
-  }
-})();
-})();
+downloadCsvBtn.addEventListener("click", downloadCSV);
+
+/* ---------- Initialisation ---------- */
+
+// Priority 1: data passed by the extension.
+// This happens before any URL loading and therefore does not call GVA.
+const extensionTasks = getTasksFromExtension();
+
+if (extensionTasks) {
+  displayTasks(extensionTasks, "extension");
+} else {
+  setStatus("Esperando datos…");
+}
