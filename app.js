@@ -487,9 +487,27 @@ function createTimelineGrid(dates, height) {
   return grid;
 }
 
+const PERSON_COLORS = [
+  "#4f46e5", "#0891b2", "#059669", "#d97706",
+  "#dc2626", "#9333ea", "#db2777", "#2563eb",
+  "#65a30d", "#ea580c", "#0f766e", "#7c3aed",
+  "#be123c", "#0369a1", "#15803d", "#b45309"
+];
+
+function colorForPerson(person) {
+  const value = String(person || "Sense assignar");
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return PERSON_COLORS[Math.abs(hash) % PERSON_COLORS.length];
+}
+
 function createTaskBar(task, timelineWidth) {
   const bar = document.createElement("div");
   bar.className = "task-bar";
+  bar.style.backgroundColor = colorForPerson(task.assigned || task.person || "Sense assignar");
 
   const startOffset = daysBetween(globalStart, task.start);
   const endOffset = daysBetween(globalStart, task.end);
