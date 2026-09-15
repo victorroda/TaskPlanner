@@ -613,9 +613,29 @@ function renderGantt() {
   body.style.width = `${CONFIG.PERSON_WIDTH + timelineWidth}px`;
 
   for (const [person, personTasks] of groups) {
+    // Assign overlapping tasks to independent vertical lanes.
+    // The lane affects only TOP; LEFT always comes from the task dates.
+    const sortedTasks = [...personTasks].sort((a, b) =>
+      a.start - b.start || a.end - b.end
+    );
+
+    const lanes = [];
+    const laneByTask = new Map();
+
+    for (const task of sortedTasks) {
+      let lane = 0;
+      while (lane < lanes.length && lanes[lane] > task.start) lane++;
+
+      if (lane === lanes.length) lanes.push(task.end);
+      else lanes[lane] = task.end;
+
+      laneByTask.set(task, lane);
+    }
+
+    const laneCount = Math.max(1, lanes.length);
     const rowHeight = Math.max(
       CONFIG.ROW_BASE_HEIGHT,
-      20 + personTasks.length * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)
+      20 + laneCount * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)
     );
 
     const row = document.createElement("div");
@@ -633,9 +653,11 @@ function renderGantt() {
 
     timeline.appendChild(createTimelineGrid(dates, rowHeight));
 
-    personTasks.forEach((task, index) => {
+    personTasks.forEach(task => {
       const bar = createTaskBar(task, timelineWidth);
-      bar.style.top = `${10 + index * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
+      const lane = laneByTask.get(task) ?? 0;
+      bar.style.top =
+        `${10 + lane * (CONFIG.TASK_HEIGHT + CONFIG.TASK_VERTICAL_GAP)}px`;
 
       bar.addEventListener("mouseenter", event => {
         tooltip.innerHTML = buildTooltip(task);
@@ -659,7 +681,6 @@ function renderGantt() {
     row.appendChild(timeline);
     body.appendChild(row);
   }
-
   inner.appendChild(header);
   inner.appendChild(monthRow);
   inner.appendChild(body);
