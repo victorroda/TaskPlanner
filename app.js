@@ -60,26 +60,32 @@ function parseDate(value) {
     return isValidDate(d) ? startOfDay(d) : null;
   }
 
-  // "16 Nov 2026"
+  // "16 Nov 2026" / "16 set 2026" / "16 des 2026"
   m = text.match(/^(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\s+(\d{4})$/);
   if (m) {
-    const month = MONTHS[m[2].slice(0, 3).toLowerCase()];
+    const months = {
+      gen: 0, feb: 1, mar: 2, abr: 3, mai: 4, jun: 5, jul: 6,
+      ago: 7, set: 8, oct: 9, nov: 10, des: 11,
+      ene: 0, dic: 11, jan: 0, apr: 3, may: 4, aug: 7,
+      sep: 8, dec: 11
+    };
+    const month = months[m[2].slice(0, 3).toLowerCase()];
     if (month !== undefined) {
       const d = new Date(Number(m[3]), month, Number(m[1]));
       return isValidDate(d) ? startOfDay(d) : null;
     }
   }
 
-  // "2026-11-16"
+  // yyyy-mm-dd
   m = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) {
     const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
     return isValidDate(d) ? startOfDay(d) : null;
   }
 
-  const d = new Date(text);
-  return isValidDate(d) ? startOfDay(d) : null;
+  return null;
 }
+
 
 function isValidDate(d) {
   return d instanceof Date && !Number.isNaN(d.getTime());
@@ -119,51 +125,87 @@ function daysBetween(a, b) {
 }
 
 function parseWords(value) {
-  let text = cleanText(value).replace(/\u00a0/g, " ");
-  if (!text) return 0;
+  let s = cleanText(value).replace(/[^\d.,-]/g, "");
+  if (!s) return 0;
 
-  text = text.replace(/[^\d.,-]/g, "");
-
-  if (text.includes(",") && text.includes(".")) {
-    text = text.replace(/\./g, "").replace(",", ".");
-  } else if (text.includes(",")) {
-    text = text.replace(/,/g, "");
-  } else if (text.includes(".") && /^\d+\.\d{3}$/.test(text)) {
-    text = text.replace(".", "");
+  if (s.includes(",") && s.includes(".")) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+  } else if (s.includes(",")) {
+    s = s.replace(/,/g, "");
+  } else if (s.includes(".") && /^-?\d+\.\d{3}$/.test(s)) {
+    s = s.replace(".", "");
   }
 
-  const n = Number(text);
+  const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
 
+
 /* ---------- Extraction from an HTML document ---------- */
 
-function getAttributeValue(card, labels) {
-  const wanted = labels.map(x => x.toLowerCase());
+function normaliseAssignee(value) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "Sin asignar";
 
-  for (const b of card.querySelectorAll("b, strong, label")) {
-    const label = cleanText(b.textContent).toLowerCase().replace(/:$/, "");
-    if (!wanted.includes(label)) continue;
+  const key = text.normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 
+  if ([
+    "sin asignar", "sin assignar", "no asignada", "no asignado",
+    "unassigned", "none", "-", "—"
+  ].includes(key)) {
+    return "Sin asignar";
+  }
+
+  return text;
+}
+
+function attributeValue(card, labels) {
+  const normalLabel = v => cleanText(v)
+    .replace(/[\s:：]+$/g, "")
+    .toLowerCase();
+
+  const wanted = new Set(labels.map(normalLabel));
+  const attributes = card.querySelector("p.attributes");
+  if (!attributes) return "";
+
+  for (const b of attributes.querySelectorAll("b, strong, label")) {
+    if (!wanted.has(normalLabel(b.textContent))) continue;
+
+    const parts = [];
     let node = b.nextSibling;
 
+    // EXACT same strategy as the extension:
+    // read siblings after the label until the next <br>.
     while (node) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const t = cleanText(node.textContent);
-        if (t) return t;
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const t = cleanText(node.textContent);
-        if (t) return t;
+      if (node.nodeType === Node.ELEMENT_NODE &&
+          node.tagName === "BR") {
+        break;
       }
+      parts.push(node.textContent || "");
       node = node.nextSibling;
     }
 
+    const value = cleanText(
+      parts.join(" ").replace(/^[\s:：-]+/, "")
+    );
+    if (value) return value;
+
+    // Same fallback as the extension.
     const parent = b.parentElement;
     if (parent) {
       const clone = parent.cloneNode(true);
-      clone.querySelectorAll("b, strong, label").forEach(x => x.remove());
-      const t = cleanText(clone.textContent);
-      if (t) return t;
+      clone.querySelectorAll("b, strong, label")
+        .forEach(x => x.remove());
+
+      const fallback = cleanText(clone.textContent)
+        .replace(/^[\s:：-]+/, "");
+      if (fallback) return fallback;
     }
   }
 
@@ -171,61 +213,79 @@ function getAttributeValue(card, labels) {
 }
 
 function extractIssueId(card) {
-  const dataId = card.getAttribute("data-id") || "";
+  const clean = v => String(v ?? "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  const idEl = card.querySelector(".issue-id");
-  const idText = cleanText(idEl?.textContent);
-  const match = idText.match(/#(\d+)/);
-  if (match) return match[1];
+  const dataId = card.getAttribute("data-id");
+  if (/^\d+$/.test(clean(dataId))) return clean(dataId);
 
-  const link = card.querySelector("a[href*='/issues/']");
-  const hrefMatch = (link?.getAttribute("href") || "").match(/\/issues\/(\d+)/);
-  if (hrefMatch) return hrefMatch[1];
+  for (const el of card.querySelectorAll(
+    ".issue-id, a[href*='/issues/'], [class*='issue-id']"
+  )) {
+    const textMatch = clean(el.textContent).match(/#(\d+)/);
+    if (textMatch) return textMatch[1];
 
-  if (/^\d+$/.test(dataId)) return dataId;
+    const href = el.getAttribute?.("href") || "";
+    const hrefMatch = href.match(/\/issues\/(\d+)/);
+    if (hrefMatch) return hrefMatch[1];
+  }
 
-  const cardMatch = cleanText(card.textContent).match(/#(\d+)/);
-  return cardMatch ? cardMatch[1] : "";
+  const m = clean(card.textContent).match(/#(\d+)/);
+  return m ? m[1] : "";
+}
+
+function getAssigned(card) {
+  // EXACT same selectors/order as the working extension.
+  const selectors = [
+    ".assigned-user .user a[href*='/people/']",
+    ".assigned-user a[href*='/people/']",
+    ".assigned-user .user a",
+    "[class*='assigned-user'] a[href*='/people/']",
+    "[class*='assigned'] a[href*='/people/']"
+  ];
+
+  for (const selector of selectors) {
+    const a = card.querySelector(selector);
+    const value = cleanText(a?.textContent);
+    if (value) return value;
+  }
+
+  return "";
+}
+
+function getTaskName(card) {
+  return cleanText(
+    card.querySelector("p.name a, p.name")?.textContent
+  ) || cleanText(
+    card.querySelector(".issue-name, .subject, [class*='subject']")
+      ?.textContent
+  );
 }
 
 function extractTaskFromCard(card) {
   const taskId = extractIssueId(card);
 
-  const name =
-    cleanText(card.querySelector("p.name a")?.textContent) ||
-    cleanText(card.querySelector("p.name")?.textContent);
+  const name = getTaskName(card);
 
-  const dueDate =
-    getAttributeValue(card, [
-      "Data real de venciment",
-      "Fecha real de vencimiento",
-      "Real due date",
-      "Due date"
-    ]);
+  const dueDate = attributeValue(card, [
+    "Data real de venciment",
+    "Fecha real de vencimiento",
+    "Real due date",
+    "Due date"
+  ]);
 
-  const wordsText =
-    getAttributeValue(card, [
-      "Nombre de paraules Salt pro",
-      "Número de palabras Salt pro",
-      "Salt pro words",
-      "Words"
-    ]);
-
-  // The actual GVA HTML stores the assignee in:
-  // <p class="info assigned-user"><span class="user"><a>imes xx</a></span>
-  const assigned =
-    cleanText(card.querySelector(".assigned-user .user a")?.textContent) ||
-    getAttributeValue(card, [
-      "Persona assignada",
-      "Persona asignada",
-      "Assigned to",
-      "Assignee"
-    ]);
+  const wordsText = attributeValue(card, [
+    "Nombre de paraules Salt pro",
+    "Número de palabras Salt pro",
+    "Salt pro words",
+    "Words"
+  ]);
 
   const issueLink =
-    card.querySelector("p.name a[href*='/issues/']")?.href ||
-    card.querySelector("a[href*='/issues/']")?.href ||
-    "";
+    card.querySelector("p.name a[href*='/issues/']") ||
+    card.querySelector("a[href*='/issues/']");
 
   return {
     taskId,
@@ -233,23 +293,28 @@ function extractTaskFromCard(card) {
     name,
     dueDate,
     words: parseWords(wordsText),
-    assigned,
-    url: issueLink
+    assigned: normaliseAssignee(getAssigned(card)),
+    url: issueLink?.href || ""
   };
 }
 
 function extractTasksFromDocument(doc) {
-  const cards = Array.from(doc.querySelectorAll(".issue-card[data-id]"));
+  // EXACT same card selector as the extension.
+  const cards = Array.from(doc.querySelectorAll(".issue-card"));
   const seen = new Set();
   const result = [];
 
   for (const card of cards) {
     const task = extractTaskFromCard(card);
+
     if (!task.taskId || seen.has(task.taskId)) continue;
 
     seen.add(task.taskId);
     result.push(task);
   }
+
+  console.log("[GVA Planning] Lector local: tarjetas:", cards.length,
+              "tareas únicas:", result.length);
 
   return result;
 }
