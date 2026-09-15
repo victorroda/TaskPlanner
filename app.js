@@ -37,6 +37,27 @@ const statusEl = document.getElementById("status");
 const ganttContainer = document.getElementById("ganttContainer");
 const tooltip = document.getElementById("tooltip");
 
+function getTasksFromExtension() {
+  try {
+    const hash = window.location.hash || "";
+    if (!hash.startsWith("#data=")) return null;
+
+    const encoded = decodeURIComponent(hash.slice(6));
+    if (!encoded) return null;
+
+    // The extension uses UTF-8-safe base64:
+    // btoa(unescape(encodeURIComponent(JSON.stringify(tasks))))
+    const json = decodeURIComponent(escape(atob(encoded)));
+    const parsed = JSON.parse(json);
+
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (error) {
+    console.error("No se pudieron leer los datos de la extensión:", error);
+    setStatus("Error leyendo los datos enviados por la extensión.", "error");
+    return null;
+  }
+}
+
 function setStatus(text, type = "") {
   statusEl.textContent = text;
   statusEl.className = "status" + (type ? " " + type : "");
@@ -100,11 +121,7 @@ function isBusinessDay(date) {
   return d !== 0 && d !== 6;
 }
 
-function addDays(date, days) {
-  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  result.setDate(result.getDate() + days);
-  return result;
-}
+
 
 /*
  * Convert a duration in working days into a calendar start date.
@@ -461,46 +478,6 @@ htmlFile.addEventListener("change", async event => {
   }
 });
 
-loadUrlBtn.addEventListener("click", async () => {
-  const url = urlInput.value.trim();
-  if (!url) {
-    setStatus("Introduce una URL.", "error");
-    return;
-  }
-
-  setStatus("Intentando cargar la URL…");
-
-  try {
-    const response = await fetch(url, {
-      credentials: "include"
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const html = await response.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-
-    const extracted = extractTasksFromDocument(doc);
-
-    if (!extracted.length) {
-      throw new Error(
-        "La página se ha descargado, pero no contiene tarjetas reconocibles."
-      );
-    }
-
-    displayTasks(extracted, "HTML");
-  } catch (error) {
-    console.error(error);
-    setStatus(
-      "No se ha podido leer la URL desde el navegador. " +
-      "Si GVA requiere autenticación/CORS, usa la extensión o carga el HTML local.",
-      "error"
-    );
-  }
-});
 
 downloadCsvBtn.addEventListener("click", downloadCSV);
 
